@@ -6,6 +6,7 @@
     bomText: null, cplText: null,
     bomName: '', cplName: '',
     gerberFiles: null, gerberName: '', outline: null, pads: null,
+    kicad: null, kicadName: '',
     model: null,
     selectedId: null,
     filterIds: null,
@@ -75,9 +76,30 @@
     }
   }
 
+  async function setKicadFile(file) {
+    showLoaderError('');
+    state.kicadName = file.name;
+    $('kicadStatus').textContent = 'Lettura…';
+    try {
+      const r = KiCad.parse(await file.text());
+      state.kicad = { bomRows: r.bomRows, cplMap: r.cplMap };
+      state.outline = r.outline;
+      state.pads = r.pads;
+      const padN = (r.pads.top ? r.pads.top.pads.length : 0) + (r.pads.bottom ? r.pads.bottom.pads.length : 0);
+      $('kicadStatus').textContent = `✓ ${r.stats.footprints} footprint · ${r.bomRows.length} gruppi · ${padN} piazzole`;
+      $('slotKicad').classList.add('loaded');
+      updateGenerateBtn();
+    } catch (e) {
+      console.error(e);
+      $('kicadStatus').textContent = '⚠ ' + (e.message || 'errore');
+      showLoaderError('KiCad: ' + (e.message || e));
+    }
+  }
+
   // Heuristic: which slot does a dropped file belong to?
   function classifyAndAssign(file) {
     const name = file.name.toLowerCase();
+    if (/\.kicad_pcb$/.test(name)) return setKicadFile(file);
     if (/\.zip$|\.gko$|\.gm\d|\.gml$|gerber|edge|outline/.test(name)) return setGerberFile(file);
     if (/cpl|pick|place|pos|placement|position/.test(name)) return setCplFile(file);
     if (/bom/.test(name)) return setBomFile(file);
@@ -88,7 +110,7 @@
   }
 
   function updateGenerateBtn() {
-    $('generateBtn').disabled = !(state.bomText && state.cplText);
+    $('generateBtn').disabled = !((state.bomText && state.cplText) || state.kicad);
   }
   function showLoaderError(msg) { $('loaderError').textContent = msg || ''; }
 
@@ -96,8 +118,14 @@
   function generate() {
     showLoaderError('');
     try {
-      const bomRows = Parsers.parseBOM(state.bomText);
-      const cplMap = Parsers.parseCPL(state.cplText);
+      let bomRows, cplMap;
+      if (state.kicad) {
+        bomRows = state.kicad.bomRows; cplMap = state.kicad.cplMap;
+        if (!state.bomName) state.bomName = state.kicadName;
+      } else {
+        bomRows = Parsers.parseBOM(state.bomText);
+        cplMap = Parsers.parseCPL(state.cplText);
+      }
       const model = BOM.buildModel(bomRows, cplMap);
       state.model = model;
       state.sig = signature(model);
@@ -142,7 +170,7 @@
   function updateCanvasInfo() {
     const m = state.model;
     let txt = `${m.components.length} componenti · ${m.groups.length} gruppi`;
-    if (state.outline) txt += ' · contorno Gerber';
+    if (state.outline) txt += ' · contorno';
     if (m.missing) txt += ` · ⚠ ${m.missing} senza posizione (assenti nel CPL)`;
     $('canvasInfo').textContent = txt;
   }
@@ -224,6 +252,7 @@
     $('bomInput').addEventListener('change', e => e.target.files[0] && setBomFile(e.target.files[0]));
     $('cplInput').addEventListener('change', e => e.target.files[0] && setCplFile(e.target.files[0]));
     $('gerberInput').addEventListener('change', e => e.target.files[0] && setGerberFile(e.target.files[0]));
+    $('kicadInput').addEventListener('change', e => e.target.files[0] && setKicadFile(e.target.files[0]));
     $('generateBtn').addEventListener('click', generate);
     $('sampleBtn').addEventListener('click', loadSample);
     $('loadBtn').addEventListener('click', () => {
@@ -316,7 +345,7 @@
     download(iso.exportSVG(), base + '-iso.svg', 'image/svg+xml');
   }
 
-  const JS_FILES = ['csv.js', 'footprints.js', 'parsers.js', 'gerber.js', 'render.js', 'iso.js', 'bom.js', 'app.js'];
+  const JS_FILES = ['csv.js', 'footprints.js', 'parsers.js', 'gerber.js', 'kicad.js', 'render.js', 'iso.js', 'bom.js', 'app.js'];
 
   async function exportStandalone() {
     try {
@@ -329,6 +358,7 @@
 
       const data = {
         bomText: state.bomText, cplText: state.cplText,
+        kicad: state.kicad,
         outline: state.outline, pads: state.pads,
         name: state.bomName || 'board',
       };
@@ -412,6 +442,7 @@ SW1,38.0,10.0,top,0`,
   if (window.IBOM_EMBED) {
     const d = window.IBOM_EMBED;
     state.bomText = d.bomText; state.cplText = d.cplText;
+    state.kicad = d.kicad || null;
     state.outline = d.outline || null; state.pads = d.pads || null;
     state.bomName = d.name || 'board';
     generate();

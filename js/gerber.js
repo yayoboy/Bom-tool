@@ -222,21 +222,100 @@
     return geo;
   }
 
+  /* ---------------- Aperture macros (AM) ---------------- */
+  // Capture %AM<name>* <primitive>* ... %  definitions from the raw text.
+  function parseMacros(text) {
+    const macros = {};
+    const re = /%AM([^*\s]+)\*([\s\S]*?)%/g;
+    let m;
+    while ((m = re.exec(text))) {
+      const body = m[2].split('*').map(s => s.trim()).filter(Boolean);
+      macros[m[1].trim()] = body;
+    }
+    return macros;
+  }
+
+  function evalExpr(s, params) {
+    if (s == null) return 0;
+    s = String(s).replace(/\$(\d+)/g, (_, n) => '(' + (params[+n - 1] != null ? params[+n - 1] : 0) + ')');
+    s = s.replace(/[xX]/g, '*');
+    if (/^[-+]?\d*\.?\d+$/.test(s.trim())) return parseFloat(s);
+    if (!/^[-+*/().\se0-9]*$/i.test(s)) return parseFloat(s) || 0;
+    try { return Function('"use strict";return (' + s + ');')() || 0; } catch (e) { return 0; }
+  }
+
+  function rotPts(pts, deg) {
+    if (!deg) return pts;
+    const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+    return pts.map(p => ({ x: p.x * c - p.y * s, y: p.x * s + p.y * c }));
+  }
+  function circlePts(cx, cy, r, n) {
+    const out = []; n = n || 24;
+    for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2; out.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) }); }
+    return out;
+  }
+
+  // Evaluate a macro body with call params -> array of contours (exposed only).
+  function evalMacro(body, callParams) {
+    const params = callParams.slice();
+    const contours = [];
+    for (const line of body) {
+      if (line[0] === '0') continue; // comment
+      const eqm = line.match(/^\$(\d+)\s*=\s*(.+)$/);
+      if (eqm) { params[+eqm[1] - 1] = evalExpr(eqm[2], params); continue; }
+      const t = line.split(',');
+      const code = parseInt(t[0], 10);
+      const v = (i) => evalExpr(t[i], params);
+      if (code === 1) { // circle: exp, dia, cx, cy[, rot]
+        if (v(1) === 0) continue;
+        let pts = circlePts(v(2), v(3), v(1) / 2, 24);
+        contours.push(rotPts(pts, t[5] != null ? v(5) : 0));
+      } else if (code === 4) { // outline: exp, n, x0,y0,...,xn,yn, rot
+        if (v(1) === 0) continue;
+        const n = Math.round(v(2)); const pts = [];
+        for (let i = 0; i <= n; i++) pts.push({ x: v(3 + i * 2), y: v(4 + i * 2) });
+        contours.push(rotPts(pts, v(3 + (n + 1) * 2)));
+      } else if (code === 5) { // regular polygon: exp, nverts, cx, cy, dia, rot
+        if (v(1) === 0) continue;
+        const nv = Math.round(v(2)), r = v(5) / 2, rot = v(6) || 0, pts = [];
+        for (let i = 0; i < nv; i++) { const a = rot * Math.PI / 180 + i / nv * Math.PI * 2; pts.push({ x: v(3) + r * Math.cos(a), y: v(4) + r * Math.sin(a) }); }
+        contours.push(pts);
+      } else if (code === 20 || code === 2) { // vector line: exp, width, x1,y1,x2,y2, rot
+        if (v(1) === 0) continue;
+        const w = v(2) / 2, x1 = v(3), y1 = v(4), x2 = v(5), y2 = v(6), rot = v(7) || 0;
+        const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy) || 1, nx = -dy / len * w, ny = dx / len * w;
+        contours.push(rotPts([{ x: x1 + nx, y: y1 + ny }, { x: x2 + nx, y: y2 + ny }, { x: x2 - nx, y: y2 - ny }, { x: x1 - nx, y: y1 - ny }], rot));
+      } else if (code === 21) { // center line (rect): exp, w, h, cx, cy, rot
+        if (v(1) === 0) continue;
+        const w = v(2) / 2, h = v(3) / 2, cx = v(4), cy = v(5), rot = v(6) || 0;
+        contours.push(rotPts([{ x: cx - w, y: cy - h }, { x: cx + w, y: cy - h }, { x: cx + w, y: cy + h }, { x: cx - w, y: cy + h }], rot));
+      }
+      // codes 6 (moiré) / 7 (thermal) intentionally skipped
+    }
+    return contours;
+  }
+
   /* ---------------- Pad layer parser (copper / paste) ---------------- */
-  function resolveAperture(template, paramStr) {
+  function resolveAperture(template, paramStr, macros) {
     const p = paramStr ? paramStr.split('X').map(s => parseFloat(s)) : [];
     switch ((template || '').toUpperCase()) {
       case 'C': return { kind: 'circle', d: p[0] || 0.5 };
       case 'R': return { kind: 'rect', w: p[0] || 0.5, h: p[1] || p[0] || 0.5 };
       case 'O': return { kind: 'obround', w: p[0] || 0.5, h: p[1] || p[0] || 0.5 };
       case 'P': return { kind: 'poly', d: p[0] || 0.5, n: Math.round(p[1] || 3), rot: p[2] || 0 };
-      default:  return { kind: 'circle', d: p[0] || 1 }; // macro / unknown -> approx
+      default:
+        if (macros && macros[template]) {
+          const contours = evalMacro(macros[template], p);
+          if (contours.length) return { kind: 'macro', contours };
+        }
+        return { kind: 'circle', d: p[0] || 1 }; // unknown -> approx
     }
   }
 
   function parseLayer(text) {
     let fmtInt = 3, fmtDec = 6, zeroOmit = 'L', unitScale = 1;
     let cur = { x: 0, y: 0 }, mode = 'G01', inRegion = false, curAp = null;
+    const macros = parseMacros(text);
     const apertures = {};
     const pads = [];      // {x,y,kind,...}
     const regions = [];   // {pts}
@@ -265,7 +344,7 @@
       if (b.startsWith('MO')) { unitScale = b.includes('IN') ? 25.4 : 1; continue; }
       if (b.startsWith('ADD')) {
         const m = b.match(/^ADD(\d+)([A-Za-z_$][\w$.\-]*)?(?:,(.*))?$/);
-        if (m) apertures[+m[1]] = resolveAperture(m[2], m[3]);
+        if (m) apertures[+m[1]] = resolveAperture(m[2], m[3], macros);
         continue;
       }
       if (/^(AM|AB|LP|LN|LM|LR|LS|TF|TA|TO|TD|SR|IP|AS|IR|MI|OF|SF|MO)/.test(b)) continue;
@@ -300,7 +379,10 @@
 
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     const ext = (x, y) => { minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y); };
-    for (const p of pads) { const r = (p.d || Math.max(p.w || 0, p.h || 0)) / 2; ext(p.x - r, p.y - r); ext(p.x + r, p.y + r); }
+    for (const p of pads) {
+      if (p.kind === 'macro') { for (const ct of p.contours) for (const pt of ct) ext(p.x + pt.x, p.y + pt.y); }
+      else { const r = (p.d || Math.max(p.w || 0, p.h || 0)) / 2; ext(p.x - r, p.y - r); ext(p.x + r, p.y + r); }
+    }
     for (const rg of regions) for (const pt of rg.pts) ext(pt.x, pt.y);
     return { pads, regions, bounds: { minX, minY, maxX, maxY } };
   }

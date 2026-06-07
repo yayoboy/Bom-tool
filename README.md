@@ -19,7 +19,9 @@ Carichi il **BOM** e il **Pick & Place (CPL)** esportati dal tuo EDA e ottieni:
 - **vista isometrica "esplosa"** in SVG, con slider di esplosione ed
   esportazione in file `.svg`;
 - **export in singolo file HTML autonomo**: consegni un solo `.html` a chi
-  assembla, con tutto incluso (codice + dati), nessun file esterno necessario.
+  assembla, con tutto incluso (codice + dati), nessun file esterno necessario;
+- **caricamento nativo `.kicad_pcb`**: da un solo file KiCad ricava BOM,
+  posizioni, contorno e piazzole — non servono CSV né Gerber.
 
 Tutto gira **nel browser, senza installazione e senza backend**: nessun dato lascia
 il tuo computer.
@@ -41,9 +43,11 @@ Per provare subito senza file: clicca **Carica progetto di esempio**.
 - **Pick & Place**: `Fabbricazione → Pick and Place file` → esporta CSV.
 
 ### KiCad
-- **BOM**: dallo schematico, *Tools → Generate BOM* (CSV).
-- **Posizioni**: dal PCB, *File → Fabrication Outputs → Component Placement (.pos)*,
-  formato CSV.
+- **Modo più semplice**: carica direttamente il file **`.kicad_pcb`** nello slot
+  apposito — il tool estrae da solo BOM, posizioni, contorno e piazzole.
+- In alternativa, file separati: **BOM** dallo schematico (*Tools → Generate
+  BOM*, CSV) e **posizioni** dal PCB (*File → Fabrication Outputs → Component
+  Placement (.pos)*, CSV).
 
 Il parser riconosce automaticamente le intestazioni più comuni di entrambi gli
 strumenti (es. `Comment`/`Value`, `Designator`/`Ref`, `Mid X`/`PosX`,
@@ -90,8 +94,11 @@ ottiene il BOM interattivo completo, senza i CSV originali.
 - [x] Fase 2: parsing dei **Gerber** (contorno) + vista isometrica.
 - [x] Rendering delle **piazzole** (layer rame/pasta) sotto i componenti.
 - [x] Esportazione in singolo file HTML autonomo.
-- [ ] Macro di apertura Gerber (`AM`) per pad di forma complessa.
-- [ ] Supporto diretto file nativi (`.kicad_pcb`).
+- [x] Macro di apertura Gerber (`AM`) per pad di forma complessa.
+- [x] Supporto diretto file nativi (`.kicad_pcb`).
+- [ ] Evidenziare le **piazzole del singolo componente** selezionato.
+- [ ] Serigrafia (silkscreen) e fori di foratura (drill).
+- [ ] Gestione varianti / componenti DNP (Do Not Place).
 
 ## Struttura
 
@@ -101,7 +108,8 @@ css/style.css       # stile
 js/csv.js           # parser CSV/TSV
 js/footprints.js    # stima dimensioni footprint
 js/parsers.js       # parsing BOM + CPL (JLCPCB/KiCad)
-js/gerber.js        # parser Gerber (contorno) + unzip nativo
+js/gerber.js        # parser Gerber (contorno + piazzole, macro AM) + unzip
+js/kicad.js         # parser nativo .kicad_pcb (s-expression)
 js/render.js        # canvas 2D: disegno, pan/zoom, hit-test
 js/iso.js           # vista isometrica esplosa in SVG
 js/bom.js           # modello dati + tabella

@@ -46,6 +46,13 @@
           <div class="slot-label">Gerber / ZIP <span class="muted">(opz.)</span></div>
           <div class="slot-status" id="gerberStatus">Per il contorno scheda</div>
         </label>
+
+        <label class="file-slot file-slot-wide" id="slotKicad">
+          <input type="file" id="kicadInput" accept=".kicad_pcb" hidden />
+          <div class="slot-icon">🟢</div>
+          <div class="slot-label">File KiCad <span class="muted">(.kicad_pcb)</span></div>
+          <div class="slot-status" id="kicadStatus">In alternativa: tutto da un solo file</div>
+        </label>
       </div>
 
       <p class="hint muted">Suggerimento: in EasyEDA usa <em>Fabbricazione → BOM</em> e <em>Pick and Place file</em>. In KiCad esporta il BOM e il file di posizionamento (.pos) in CSV.</p>
@@ -119,6 +126,7 @@
   <script src="js/footprints.js"></script>
   <script src="js/parsers.js"></script>
   <script src="js/gerber.js"></script>
+  <script src="js/kicad.js"></script>
   <script src="js/render.js"></script>
   <script src="js/iso.js"></script>
   <script src="js/bom.js"></script>

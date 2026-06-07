@@ -145,6 +145,10 @@
     const poly = (pts) => `<polygon points="${ptsStr(pts.map(p => this._p(p.x, p.y, z)))}"/>`;
     if (L.regions) for (const rg of L.regions) if (rg.pts.length >= 3) s += poly(rg.pts);
     for (const pad of L.pads) {
+      if (pad.kind === 'macro') {
+        for (const ct of pad.contours) if (ct.length >= 3) s += poly(ct.map(p => ({ x: pad.x + p.x, y: pad.y + p.y })));
+        continue;
+      }
       let pts;
       if (pad.kind === 'rect' || pad.kind === 'obround') {
         const hw = pad.w / 2, hh = pad.h / 2;

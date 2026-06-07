@@ -227,6 +227,14 @@
         ctx.beginPath();
         for (let i = 0; i < n; i++) { const a = rot + i / n * Math.PI * 2; const X = p.x + r * Math.cos(a), Y = p.y - r * Math.sin(a); i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); }
         ctx.closePath(); ctx.fill();
+      } else if (pad.kind === 'macro') {
+        const mir = this._mirror();
+        for (const ct of pad.contours) {
+          if (ct.length < 3) continue;
+          ctx.beginPath();
+          for (let i = 0; i < ct.length; i++) { const X = p.x + ct[i].x * s * mir, Y = p.y - ct[i].y * s; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); }
+          ctx.closePath(); ctx.fill();
+        }
       }
     }
   };

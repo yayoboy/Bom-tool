@@ -129,6 +129,8 @@ body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 .lcsc a { color: var(--accent); text-decoration: none; }
 .lcsc a:hover { text-decoration: underline; }
 .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+.badge-dnp { display: inline-block; font-size: 10px; font-weight: 700; color: #b388ff; border: 1px solid #5a4a7a; border-radius: 3px; padding: 0 4px; margin-left: 6px; vertical-align: middle; }
+.bom-table tbody tr.dnp td.col-value { color: var(--muted); }
 
 /* Canvas */
 .canvas-area { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }

@@ -5,12 +5,13 @@
   const state = {
     bomText: null, cplText: null,
     bomName: '', cplName: '',
-    gerberFiles: null, gerberName: '', outline: null, pads: null,
+    gerberFiles: null, gerberName: '', outline: null, pads: null, silk: null, drill: null,
     kicad: null, kicadName: '',
     model: null,
     selectedId: null,
     filterIds: null,
     layer: 'top',
+    hideDNP: false,
     view: '2d',
     sig: null,
   };
@@ -59,11 +60,15 @@
       const layers = Gerber.layersFromFiles(files);
       state.outline = layers.outline;
       state.pads = layers.pads;
+      state.silk = layers.silk;
+      state.drill = layers.drill;
       const padCount = (layers.pads.top ? layers.pads.top.pads.length : 0) + (layers.pads.bottom ? layers.pads.bottom.pads.length : 0);
       if (layers.outline || padCount) {
         const bits = [];
         if (layers.outline) bits.push('contorno');
         if (padCount) bits.push(padCount + ' piazzole');
+        if (layers.silk && (layers.silk.top || layers.silk.bottom)) bits.push('serigrafia');
+        if (layers.drill) bits.push(layers.drill.holes.length + ' fori');
         $('gerberStatus').textContent = '✓ ' + bits.join(' · ');
         $('slotGerber').classList.add('loaded');
       } else {
@@ -85,8 +90,11 @@
       state.kicad = { bomRows: r.bomRows, cplMap: r.cplMap };
       state.outline = r.outline;
       state.pads = r.pads;
+      state.silk = r.silk;
+      state.drill = r.drill;
       const padN = (r.pads.top ? r.pads.top.pads.length : 0) + (r.pads.bottom ? r.pads.bottom.pads.length : 0);
-      $('kicadStatus').textContent = `✓ ${r.stats.footprints} footprint · ${r.bomRows.length} gruppi · ${padN} piazzole`;
+      const extra = (r.stats.dnp ? ` · ${r.stats.dnp} DNP` : '') + (r.drill ? ` · ${r.drill.holes.length} fori` : '');
+      $('kicadStatus').textContent = `✓ ${r.stats.footprints} footprint · ${r.bomRows.length} gruppi · ${padN} piazzole${extra}`;
       $('slotKicad').classList.add('loaded');
       updateGenerateBtn();
     } catch (e) {
@@ -145,12 +153,18 @@
         iso = new IsoView($('isoView'));
         iso.onClick = (gid) => selectGroup(gid, true);
       }
+      associatePads(state.pads, model.drawable);
+
       renderer.setComponents(model.drawable);
       renderer.setOutline(state.outline);
       renderer.setPads(state.pads);
+      renderer.setSilk(state.silk);
+      renderer.setDrill(state.drill);
       iso.setComponents(model.drawable);
       iso.setOutline(state.outline);
       iso.setPads(state.pads);
+      iso.setSilk(state.silk);
+      iso.setDrill(state.drill);
       iso.setLayer(state.layer);
       iso.setExplode(parseFloat($('explodeRange').value));
 
@@ -167,10 +181,38 @@
     }
   }
 
+  // Link Gerber pads (which carry no designator) to the nearest component.
+  // KiCad pads already have .ref, so we only fill in the missing ones.
+  function associatePads(pads, comps) {
+    if (!pads) return;
+    for (const layer of ['top', 'bottom']) {
+      const L = pads[layer];
+      if (!L || !L.pads.length) continue;
+      if (L.pads[0] && L.pads[0].ref) continue; // already linked (KiCad)
+      const cs = comps.filter(c => c.layer === layer);
+      if (!cs.length || cs.length * L.pads.length > 4e6) continue;
+      for (const pad of L.pads) {
+        let best = null, bestD = Infinity;
+        for (const c of cs) {
+          const dx = pad.x - c.x, dy = pad.y - c.y;
+          const a = -(c.rot || 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+          const lx = Math.abs(dx * ca - dy * sa), ly = Math.abs(dx * sa + dy * ca);
+          const inside = lx <= c.w / 2 + 0.4 && ly <= c.h / 2 + 0.4;
+          const d = dx * dx + dy * dy;
+          if (inside && d < bestD) { bestD = d; best = c; }
+        }
+        if (best) pad.ref = best.ref;
+      }
+    }
+  }
+
   function updateCanvasInfo() {
     const m = state.model;
     let txt = `${m.components.length} componenti · ${m.groups.length} gruppi`;
+    const dnpN = m.groups.filter(g => g.dnp).length;
+    if (dnpN) txt += ` · ${dnpN} DNP`;
     if (state.outline) txt += ' · contorno';
+    if (state.drill) txt += ` · ${state.drill.holes.length} fori`;
     if (m.missing) txt += ` · ⚠ ${m.missing} senza posizione (assenti nel CPL)`;
     $('canvasInfo').textContent = txt;
   }
@@ -178,6 +220,13 @@
   /* ---------- Selection ---------- */
   function selectGroup(id, scrollIntoView) {
     state.selectedId = (state.selectedId === id) ? null : id;
+    let refs = null;
+    if (state.selectedId != null) {
+      const g = state.model.groups.find(x => x.id === state.selectedId);
+      if (g) refs = new Set(g.designators);
+    }
+    renderer.setSelectedRefs(refs);
+    iso.setSelectedRefs(refs);
     renderer.setSelected(state.selectedId);
     iso.setSelected(state.selectedId);
     refreshTable();
@@ -190,12 +239,14 @@
   /* ---------- Filtering / search ---------- */
   function applyFilter() {
     const q = $('searchInput').value.trim().toLowerCase();
-    if (!q) { state.filterIds = null; renderer.setVisible(null); if (iso) iso.setVisible(null); return; }
+    const constrained = q || state.hideDNP;
+    if (!constrained) { state.filterIds = null; renderer.setVisible(null); if (iso) iso.setVisible(null); return; }
     const ids = new Set();
     const refs = new Set();
     for (const g of state.model.groups) {
+      if (state.hideDNP && g.dnp) continue;
       const hay = (g.comment + ' ' + g.footprint + ' ' + g.lcsc + ' ' + g.designators.join(' ')).toLowerCase();
-      if (hay.includes(q)) { ids.add(g.id); g.designators.forEach(r => refs.add(r)); }
+      if (!q || hay.includes(q)) { ids.add(g.id); g.designators.forEach(r => refs.add(r)); }
     }
     state.filterIds = ids;
     renderer.setVisible(refs);
@@ -239,7 +290,7 @@
     saveProgress(); updateProgress(); refreshTable(); redrawViews();
   }
   function updateProgress() {
-    const groups = state.model.groups;
+    const groups = state.model.groups.filter(g => !g.dnp); // DNP non si montano
     const total = groups.length;
     const done = groups.filter(g => g.done).length;
     $('progressFill').style.width = total ? (done / total * 100) + '%' : '0';
@@ -289,7 +340,7 @@
 
     $('checkAll').addEventListener('change', (e) => {
       const val = e.target.checked;
-      for (const g of state.model.groups) { g.done = val; g.comps.forEach(c => c.done = val); }
+      for (const g of state.model.groups) { if (g.dnp) continue; g.done = val; g.comps.forEach(c => c.done = val); }
       saveProgress(); updateProgress(); refreshTable(); redrawViews();
     });
 
@@ -313,6 +364,9 @@
     $('exportSvgBtn').addEventListener('click', exportSvg);
     $('exportHtmlBtn').addEventListener('click', exportStandalone);
     $('showPads').addEventListener('change', e => { renderer.setShowPads(e.target.checked); if (iso) iso.setShowPads(e.target.checked); });
+    $('showSilk').addEventListener('change', e => { renderer.setShowSilk(e.target.checked); if (iso) iso.setShowSilk(e.target.checked); });
+    $('showDrill').addEventListener('change', e => { renderer.setShowDrill(e.target.checked); if (iso) iso.setShowDrill(e.target.checked); });
+    $('showDNP').addEventListener('change', e => { state.hideDNP = !e.target.checked; applyFilter(); refreshTable(); redrawViews(); });
 
     $('zoomInBtn').addEventListener('click', () => (state.view === 'iso' ? iso.zoomBy(1.25) : renderer.zoomBy(1.25)));
     $('zoomOutBtn').addEventListener('click', () => (state.view === 'iso' ? iso.zoomBy(1 / 1.25) : renderer.zoomBy(1 / 1.25)));
@@ -359,7 +413,7 @@
       const data = {
         bomText: state.bomText, cplText: state.cplText,
         kicad: state.kicad,
-        outline: state.outline, pads: state.pads,
+        outline: state.outline, pads: state.pads, silk: state.silk, drill: state.drill,
         name: state.bomName || 'board',
       };
       const json = JSON.stringify(data).replace(/</g, '\\u003c');
@@ -444,6 +498,7 @@ SW1,38.0,10.0,top,0`,
     state.bomText = d.bomText; state.cplText = d.cplText;
     state.kicad = d.kicad || null;
     state.outline = d.outline || null; state.pads = d.pads || null;
+    state.silk = d.silk || null; state.drill = d.drill || null;
     state.bomName = d.name || 'board';
     generate();
   }

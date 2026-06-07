@@ -28,7 +28,12 @@
     this.comps = [];
     this.outline = null;
     this.pads = null;
+    this.silk = null;
+    this.drill = null;
+    this.selRefs = null;
     this.showPads = true;
+    this.showSilk = true;
+    this.showDrill = true;
     this.layer = 'top';
     this.selectedGroup = null;
     this.visible = null;
@@ -46,6 +51,11 @@
   IsoView.prototype.setOutline = function (geo) { this.outline = geo; this._computeCentre(); };
   IsoView.prototype.setPads = function (p) { this.pads = p; };
   IsoView.prototype.setShowPads = function (b) { this.showPads = b; this.render(); };
+  IsoView.prototype.setSilk = function (s) { this.silk = s; };
+  IsoView.prototype.setDrill = function (d) { this.drill = d; };
+  IsoView.prototype.setShowSilk = function (b) { this.showSilk = b; this.render(); };
+  IsoView.prototype.setShowDrill = function (b) { this.showDrill = b; this.render(); };
+  IsoView.prototype.setSelectedRefs = function (s) { this.selRefs = s; };
   IsoView.prototype.setLayer = function (l) { this.layer = l; this.render(true); };
   IsoView.prototype.setSelected = function (g) { this.selectedGroup = g; this.render(); };
   IsoView.prototype.setVisible = function (s) { this.visible = s; this.render(); };
@@ -104,6 +114,19 @@
         parts.unshift(this._padsSvg(this.pads.bottom, -this.thickness));
     }
 
+    // ----- silkscreen -----
+    if (this.silk && this.showSilk) {
+      if ((this.layer === 'top' || this.layer === 'both') && this.silk.top) parts.push(this._silkSvg(this.silk.top, 0));
+      if ((this.layer === 'bottom' || this.layer === 'both') && this.silk.bottom) parts.push(this._silkSvg(this.silk.bottom, -this.thickness));
+    }
+
+    // ----- drill holes -----
+    if (this.drill && this.showDrill) {
+      let s = `<g fill="#05080b" stroke="rgba(150,160,170,0.5)" stroke-width="0.5" vector-effect="non-scaling-stroke">`;
+      for (const h of this.drill.holes) { const c = this._p(h.x, h.y, 0); s += `<circle cx="${round(c.x)}" cy="${round(c.y)}" r="${round(h.d / 2 * COS30)}"/>`; }
+      parts.push(s + `</g>`);
+    }
+
     // ----- components, painter-sorted back -> front -----
     const list = this.comps.filter(c => this._layerVisible(c));
     const bottoms = list.filter(c => c.layer === 'bottom').sort((a, b) => (a.x + a.y) - (b.x + b.y));
@@ -141,12 +164,13 @@
 
   IsoView.prototype._padsSvg = function (L, z) {
     const fill = L.isPaste ? '#aab4be' : '#c4a048';
-    let s = `<g class="iso-pads" fill="${fill}">`;
-    const poly = (pts) => `<polygon points="${ptsStr(pts.map(p => this._p(p.x, p.y, z)))}"/>`;
-    if (L.regions) for (const rg of L.regions) if (rg.pts.length >= 3) s += poly(rg.pts);
+    let s = `<g class="iso-pads">`;
+    const poly = (pts, f) => `<polygon points="${ptsStr(pts.map(p => this._p(p.x, p.y, z)))}" fill="${f}"/>`;
+    if (L.regions) for (const rg of L.regions) if (rg.pts.length >= 3) s += poly(rg.pts, fill);
     for (const pad of L.pads) {
+      const f = (this.selRefs && pad.ref && this.selRefs.has(pad.ref)) ? '#ffd33d' : fill;
       if (pad.kind === 'macro') {
-        for (const ct of pad.contours) if (ct.length >= 3) s += poly(ct.map(p => ({ x: pad.x + p.x, y: pad.y + p.y })));
+        for (const ct of pad.contours) if (ct.length >= 3) s += poly(ct.map(p => ({ x: pad.x + p.x, y: pad.y + p.y })), f);
         continue;
       }
       let pts;
@@ -158,7 +182,17 @@
         pts = [];
         for (let i = 0; i < n; i++) { const a = rot + i / n * Math.PI * 2; pts.push({ x: pad.x + r * Math.cos(a), y: pad.y + r * Math.sin(a) }); }
       }
-      s += poly(pts);
+      s += poly(pts, f);
+    }
+    return s + `</g>`;
+  };
+
+  IsoView.prototype._silkSvg = function (S, z) {
+    let s = `<g fill="none" stroke="rgba(225,230,235,0.7)" stroke-width="1" vector-effect="non-scaling-stroke">`;
+    for (const p of S.paths) {
+      if (p.pts.length < 2) continue;
+      const pts = p.pts.map(q => this._p(q.x, q.y, z));
+      s += `<poly${p.closed ? 'gon' : 'line'} points="${ptsStr(pts)}"/>`;
     }
     return s + `</g>`;
   };
@@ -168,7 +202,8 @@
     const filtered = this._filtered(c);
     const opacity = filtered ? 0.12 : 1;
     let topCol, sideCol;
-    if (c.done) { topCol = COL.done; sideCol = COL.doneSide; }
+    if (c.dnp) { topCol = 'rgba(120,100,140,0.45)'; sideCol = 'rgba(90,75,110,0.5)'; }
+    else if (c.done) { topCol = COL.done; sideCol = COL.doneSide; }
     else if (sel) { topCol = COL.sel; sideCol = COL.selSide; }
     else if (c.layer === 'bottom') { topCol = COL.bottom; sideCol = COL.bottomSide; }
     else { topCol = COL.top; sideCol = COL.topSide; }

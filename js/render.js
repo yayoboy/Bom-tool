@@ -28,7 +28,12 @@
     this.onHover = null;
     this.outline = null;
     this.pads = null;
+    this.silk = null;
+    this.drill = null;
+    this.selRefs = null;
     this.showPads = true;
+    this.showSilk = true;
+    this.showDrill = true;
     this._bindEvents();
   }
 
@@ -36,6 +41,11 @@
   Renderer.prototype.setOutline = function (geo) { this.outline = geo; };
   Renderer.prototype.setPads = function (pads) { this.pads = pads; };
   Renderer.prototype.setShowPads = function (b) { this.showPads = b; this.draw(); };
+  Renderer.prototype.setSilk = function (s) { this.silk = s; };
+  Renderer.prototype.setDrill = function (d) { this.drill = d; };
+  Renderer.prototype.setShowSilk = function (b) { this.showSilk = b; this.draw(); };
+  Renderer.prototype.setShowDrill = function (b) { this.showDrill = b; this.draw(); };
+  Renderer.prototype.setSelectedRefs = function (set) { this.selRefs = set; };
   Renderer.prototype.setLayer = function (l) { this.layer = l; this.fit(); };
   Renderer.prototype.setSelected = function (g) { this.selectedGroup = g; this.draw(); };
   Renderer.prototype.setVisible = function (set) { this.visible = set; this.draw(); };
@@ -148,6 +158,37 @@
       }
     }
 
+    // silkscreen
+    if (this.silk && this.showSilk) {
+      ctx.strokeStyle = 'rgba(225,230,235,0.7)';
+      ctx.lineWidth = 1;
+      for (const layer of ['top', 'bottom']) {
+        if (this.layer !== 'both' && this.layer !== layer) continue;
+        const S = this.silk[layer];
+        if (!S) continue;
+        for (const p of S.paths) {
+          if (p.pts.length < 2) continue;
+          ctx.beginPath();
+          const s0 = this.w2s(p.pts[0].x, p.pts[0].y); ctx.moveTo(s0.x, s0.y);
+          for (let i = 1; i < p.pts.length; i++) { const s = this.w2s(p.pts[i].x, p.pts[i].y); ctx.lineTo(s.x, s.y); }
+          if (p.closed) ctx.closePath();
+          ctx.stroke();
+        }
+      }
+    }
+
+    // drill holes
+    if (this.drill && this.showDrill) {
+      ctx.fillStyle = '#05080b';
+      ctx.strokeStyle = 'rgba(150,160,170,0.6)';
+      ctx.lineWidth = 1;
+      for (const h of this.drill.holes) {
+        const p = this.w2s(h.x, h.y);
+        ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(h.d * this.scale / 2, 0.5), 0, Math.PI * 2);
+        ctx.fill(); ctx.stroke();
+      }
+    }
+
     // components
     for (const c of this.comps) {
       if (!this._layerVisible(c)) continue;
@@ -170,15 +211,22 @@
     ctx.globalAlpha = filtered ? 0.12 : 1;
 
     let stroke, fill;
-    if (c.done) { stroke = COL.doneStroke; fill = COL.done; }
+    if (c.dnp) { stroke = 'rgba(140,120,160,0.8)'; fill = 'rgba(120,100,140,0.12)'; }
+    else if (c.done) { stroke = COL.doneStroke; fill = COL.done; }
     else if (selected) { stroke = COL.sel; fill = COL.selFill; }
     else if (c.layer === 'top') { stroke = COL.top; fill = COL.topFill; }
     else { stroke = COL.bottom; fill = COL.bottomFill; }
 
     ctx.lineWidth = selected ? 2.5 : 1.2;
     ctx.strokeStyle = stroke; ctx.fillStyle = fill;
+    if (c.dnp) ctx.setLineDash([3, 2]);
     roundRect(ctx, -w / 2, -h / 2, w, h, Math.min(2, w / 4, h / 4));
     ctx.fill(); ctx.stroke();
+    if (c.dnp) {
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(-w / 2, -h / 2); ctx.lineTo(w / 2, h / 2);
+      ctx.moveTo(w / 2, -h / 2); ctx.lineTo(-w / 2, h / 2); ctx.stroke();
+    }
 
     // pin-1 / orientation tick
     ctx.beginPath();
@@ -202,7 +250,9 @@
 
   Renderer.prototype._drawPads = function (ctx, L) {
     const s = this.scale;
-    ctx.fillStyle = L.isPaste ? 'rgba(170,180,190,0.85)' : 'rgba(196,160,72,0.9)';
+    const baseFill = L.isPaste ? 'rgba(170,180,190,0.85)' : 'rgba(196,160,72,0.9)';
+    const hiFill = 'rgba(255,211,61,0.95)';
+    ctx.fillStyle = baseFill;
     // regions
     if (L.regions) for (const rg of L.regions) {
       if (rg.pts.length < 3) continue;
@@ -214,6 +264,7 @@
     }
     // flashed pads
     for (const pad of L.pads) {
+      ctx.fillStyle = (this.selRefs && pad.ref && this.selRefs.has(pad.ref)) ? hiFill : baseFill;
       const p = this.w2s(pad.x, pad.y);
       if (pad.kind === 'circle') {
         ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(pad.d * s / 2, 0.5), 0, Math.PI * 2); ctx.fill();

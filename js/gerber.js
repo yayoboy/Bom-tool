@@ -387,6 +387,43 @@
     return { pads, regions, bounds: { minX, minY, maxX, maxY } };
   }
 
+  /* ---------------- Excellon drill parser ---------------- */
+  function parseExcellon(text) {
+    let units = 'mm', dec = 3, integerMode = false;
+    const tools = {}; let curTool = null;
+    const holes = [];
+    let cx = 0, cy = 0;
+    const lines = text.replace(/\r/g, '').split('\n');
+    // format hints
+    if (/INCH/i.test(text)) { units = 'in'; dec = 4; }
+    if (/METRIC/i.test(text)) { units = 'mm'; dec = 3; }
+
+    const coord = (s) => {
+      if (s == null) return null;
+      if (s.includes('.')) return parseFloat(s) * (units === 'in' ? 25.4 : 1);
+      const sign = s[0] === '-' ? -1 : 1; s = s.replace(/^[+-]/, '');
+      return sign * (parseInt(s, 10) || 0) / Math.pow(10, dec) * (units === 'in' ? 25.4 : 1);
+    };
+
+    for (let ln of lines) {
+      ln = ln.trim(); if (!ln || ln[0] === ';') continue;
+      let m = ln.match(/^T(\d+)C([\d.]+)/i);
+      if (m) { tools[m[1]] = parseFloat(m[2]) * (units === 'in' ? 25.4 : 1); continue; }
+      m = ln.match(/^T(\d+)\s*$/i);
+      if (m) { curTool = m[1]; continue; }
+      const mx = ln.match(/X([+-]?[\d.]+)/i), my = ln.match(/Y([+-]?[\d.]+)/i);
+      if (mx || my) {
+        if (mx) cx = coord(mx[1]); if (my) cy = coord(my[1]);
+        const d = curTool && tools[curTool] ? tools[curTool] : 0.3;
+        holes.push({ x: cx, y: cy, d });
+      }
+    }
+    if (!holes.length) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const h of holes) { const r = h.d / 2; minX = Math.min(minX, h.x - r); maxX = Math.max(maxX, h.x + r); minY = Math.min(minY, h.y - r); maxY = Math.max(maxY, h.y + r); }
+    return { holes, bounds: { minX, minY, maxX, maxY } };
+  }
+
   function pickLayers(files) {
     const find = (re) => files.find(f => re.test(f.name.toLowerCase()));
     return {
@@ -395,25 +432,31 @@
       pasteBot: find(/(^|[^a-z])b[_.\- ]?paste|bot.?paste|paste.?bot|\.gbp$/),
       copperTop: find(/(^|[^a-z])f[_.\- ]?cu|top.?copper|copper.?top|\.gtl$/),
       copperBot: find(/(^|[^a-z])b[_.\- ]?cu|bot.?copper|copper.?bot|\.gbl$/),
+      silkTop: find(/(^|[^a-z])f[_.\- ]?silk|top.?silk|silk.?top|\.gto$/),
+      silkBot: find(/(^|[^a-z])b[_.\- ]?silk|bot.?silk|silk.?bot|\.gbo$/),
+      drill: find(/\.drl$|\.xln$|\.nc$|drill|\.tap$/),
     };
   }
 
-  /* High-level: outline + pads (top/bottom) from a set of gerber files. */
+  /* High-level: outline + pads + silk + drill from a set of gerber files. */
   function layersFromFiles(files) {
     const L = pickLayers(files);
     const outline = L.outlineF ? Object.assign(parse(L.outlineF.text) || {}, { source: L.outlineF.name }) : null;
-    const side = (pasteF, copperF) => {
+    const padSide = (pasteF, copperF) => {
       const f = pasteF || copperF;
       if (!f) return null;
       const g = parseLayer(f.text);
       g.source = f.name; g.isPaste = !!pasteF;
       return g;
     };
+    const silkSide = (f) => { if (!f) return null; const g = parse(f.text); if (g) g.source = f.name; return g; };
     return {
       outline: (outline && outline.paths) ? outline : null,
-      pads: { top: side(L.pasteTop, L.copperTop), bottom: side(L.pasteBot, L.copperBot) },
+      pads: { top: padSide(L.pasteTop, L.copperTop), bottom: padSide(L.pasteBot, L.copperBot) },
+      silk: { top: silkSide(L.silkTop), bottom: silkSide(L.silkBot) },
+      drill: L.drill ? parseExcellon(L.drill.text) : null,
     };
   }
 
-  global.Gerber = { unzip, parse, parseLayer, pickOutline, pickLayers, outlineFromFiles, layersFromFiles };
+  global.Gerber = { unzip, parse, parseLayer, parseExcellon, pickOutline, pickLayers, outlineFromFiles, layersFromFiles };
 })(window);

@@ -11,13 +11,14 @@
       const [w, h] = Footprints.lookup(row.footprint);
       const groupComps = [];
       const layers = new Set();
+      const dnp = !!row.dnp;
 
       for (const ref of row.designators) {
         const pos = cplMap[ref];
         const comp = {
           ref, groupId: idx,
           comment: row.comment, footprint: row.footprint, lcsc: row.lcsc,
-          w, h, done: false,
+          w, h, done: false, dnp,
           x: pos ? pos.x : null, y: pos ? pos.y : null,
           rot: pos ? pos.rot : 0,
           layer: pos ? pos.layer : 'top',
@@ -35,7 +36,7 @@
         designators: row.designators,
         layer: layers.size === 0 ? 'top' : layers.size > 1 ? 'mixed' : [...layers][0],
         comps: groupComps,
-        done: false,
+        done: false, dnp,
       });
     });
 
@@ -68,11 +69,13 @@
       tr.dataset.gid = g.id;
       if (g.id === selectedId) tr.classList.add('selected');
       if (g.done) tr.classList.add('done');
+      if (g.dnp) tr.classList.add('dnp');
+      const dnpBadge = g.dnp ? ' <span class="badge-dnp">DNP</span>' : '';
       tr.innerHTML =
-        `<td class="col-check"><input type="checkbox" ${g.done ? 'checked' : ''} data-check="${g.id}"></td>` +
+        `<td class="col-check"><input type="checkbox" ${g.done ? 'checked' : ''} ${g.dnp ? 'disabled' : ''} data-check="${g.id}"></td>` +
         `<td class="col-num">${n}</td>` +
         `<td class="col-qty">${g.qty}</td>` +
-        `<td class="col-value">${layerSwatch(g.layer)}${escapeHtml(g.comment || '(senza valore)')}</td>` +
+        `<td class="col-value">${layerSwatch(g.layer)}${escapeHtml(g.comment || '(senza valore)')}${dnpBadge}</td>` +
         `<td>${escapeHtml(g.footprint || '')}</td>` +
         `<td class="designators">${g.designators.map(escapeHtml).join(', ')}</td>` +
         `<td class="lcsc">${lcscLink(g.lcsc)}</td>`;

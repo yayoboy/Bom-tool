@@ -37,6 +37,7 @@
     const kFoot = findKey(headers, [/footprint/i, /package/i, /^pattern$/i]);
     const kLcsc = findKey(headers, [/lcsc/i, /jlcpcb\s*part/i, /supplier\s*part/i, /^mpn$/i, /manufacturer\s*part/i]);
     const kQty = findKey(headers, [/quantity/i, /^qty$/i]);
+    const kPop = findKey(headers, [/^dnp$/i, /populate/i, /^mount$/i, /fitted/i, /assembly/i, /^place$/i]);
 
     if (!kDesig) throw new Error('Colonna "Designator" non trovata nel BOM. Intestazioni: ' + headers.join(', '));
 
@@ -44,12 +45,19 @@
     for (const rec of records) {
       const designators = splitDesignators(rec[kDesig]);
       if (!designators.length) continue;
+      let dnp = false;
+      if (kPop) {
+        const v = (rec[kPop] || '').toLowerCase();
+        // column may mean "populate" (no=DNP) or "DNP" (yes=DNP)
+        if (/dnp/i.test(kPop) || /assembly/i.test(kPop)) dnp = /^(y|yes|true|1|dnp)$/.test(v);
+        else dnp = /^(n|no|false|0|dnp|do.?not)/.test(v);
+      }
       rows.push({
         comment: kComment ? rec[kComment] : '',
         footprint: kFoot ? rec[kFoot] : '',
         lcsc: kLcsc ? rec[kLcsc] : '',
         qty: kQty ? (parseInt(rec[kQty], 10) || designators.length) : designators.length,
-        designators,
+        designators, dnp,
       });
     }
     if (!rows.length) throw new Error('Nessuna riga valida nel BOM.');

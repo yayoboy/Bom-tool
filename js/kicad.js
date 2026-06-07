@@ -102,6 +102,13 @@
     return paths;
   }
 
+  const onSilk = (nd) => { const l = child(nd, 'layer'); return l && /Silk/i.test(str(l[1]) || ''); };
+  function circleLocal(c, r, tp) {
+    const cx = num(c[1]), cy = num(c[2]), out = [], n = 32;
+    for (let i = 0; i < n; i++) { const a = i / n * 2 * Math.PI; out.push(tp(cx + r * Math.cos(a), cy + r * Math.sin(a))); }
+    return out;
+  }
+
   /* ---- main parse ---- */
   function parse(text) {
     const root = parseSexpr(text);
@@ -110,10 +117,13 @@
     const fps = root.filter(c => isArr(c) && (head(c) === 'footprint' || head(c) === 'module'));
     if (!fps.length) throw new Error('Nessun footprint trovato nel file .kicad_pcb.');
 
-    const bomMap = new Map();   // key -> {comment, footprint, designators[]}
+    const bomMap = new Map();   // key -> {comment, footprint, designators[], dnp}
     const cplMap = {};
     const padsTop = { pads: [], regions: [], isPaste: false };
     const padsBot = { pads: [], regions: [], isPaste: false };
+    const silkTop = { paths: [] }, silkBot = { paths: [] };
+    const holes = [];           // {x,y,d}
+    const dnpRefs = {};
 
     for (const fp of fps) {
       const fpName = str(fp[1]) || '';
@@ -123,25 +133,37 @@
       const fx = at ? num(at[1]) : 0, fyRaw = at ? num(at[2]) : 0;
       const frot = at && at[3] != null ? num(at[3]) : 0;
       const fy = -fyRaw; // to Y-up
+      // transform a footprint-local point (file coords) into absolute Y-up
+      const tp = (lx, ly) => { const r = rotCCW(lx, -ly, frot); return { x: fx + r.x, y: fy + r.y }; };
 
       const layerNode = child(fp, 'layer');
       const onBottom = layerNode && /B\.Cu|B\.Adhes|Bottom/i.test(str(layerNode[1]) || '');
 
+      // DNP / do-not-populate detection (KiCad v7/v8 variants)
+      let dnp = false;
+      const attr = child(fp, 'attr');
+      if (attr && attr.some(x => x && x.a === 'dnp')) dnp = true;
+      const dnpNode = child(fp, 'dnp');
+      if (dnpNode && /yes|true/i.test(str(dnpNode[1]) || 'yes')) dnp = true;
+
       // reference & value (KiCad v6+: property; older: fp_text)
       let ref = null, val = null;
       for (const p of children(fp, 'property')) {
-        const k = str(p[1]); if (k === 'Reference') ref = str(p[2]); else if (k === 'Value') val = str(p[2]);
+        const k = str(p[1]);
+        if (k === 'Reference') ref = str(p[2]);
+        else if (k === 'Value') val = str(p[2]);
+        else if (/dnp|do.?not.?(populate|place)|populate/i.test(k || '') && /no|dnp|false|do.?not/i.test(str(p[2]) || '')) dnp = true;
       }
       for (const t of children(fp, 'fp_text')) {
         const k = t[1] && t[1].a; if (k === 'reference' && !ref) ref = str(t[2]); else if (k === 'value' && !val) val = str(t[2]);
       }
       if (!ref) continue;
-      // skip unplaced / virtual handled implicitly
+      if (dnp) dnpRefs[ref] = true;
 
       cplMap[ref] = { x: fx, y: fy, rot: frot, layer: onBottom ? 'bottom' : 'top' };
 
-      const key = (val || '') + '|' + footprint;
-      if (!bomMap.has(key)) bomMap.set(key, { comment: val || '', footprint, lcsc: '', designators: [] });
+      const key = (val || '') + '|' + footprint + (dnp ? '|DNP' : '');
+      if (!bomMap.has(key)) bomMap.set(key, { comment: val || '', footprint, lcsc: '', designators: [], dnp });
       bomMap.get(key).designators.push(ref);
 
       // pads
@@ -160,14 +182,49 @@
         const px = fx + r.x, py = fy + r.y;
         const total = frot + prot;                   // CCW, Y-up
         if (shape === 'circle' || (shape === 'oval' && Math.abs(w - h) < 1e-6)) {
-          bucket.pads.push({ x: px, y: py, kind: 'circle', d: Math.max(w, h) });
+          bucket.pads.push({ x: px, y: py, kind: 'circle', d: Math.max(w, h), ref });
         } else {
           // rect / roundrect / oval / trapezoid / custom -> rotated rectangle contour
           const hw = w / 2, hh = h / 2;
           const corners = [{ x: -hw, y: -hh }, { x: hw, y: -hh }, { x: hw, y: hh }, { x: -hw, y: hh }]
             .map(c => rotCCW(c.x, c.y, total));
-          bucket.pads.push({ x: px, y: py, kind: 'macro', contours: [corners] });
+          bucket.pads.push({ x: px, y: py, kind: 'macro', contours: [corners], ref });
         }
+        // drill hole (through-hole pads / NPTH)
+        const drill = child(pad, 'drill');
+        if (drill) {
+          const dd = num(drill[1]);
+          if (!isNaN(dd) && dd > 0) holes.push({ x: px, y: py, d: dd });
+        }
+      }
+
+      // silkscreen graphics belonging to this footprint
+      const silkBucket = onBottom ? silkBot : silkTop;
+      for (const ln of children(fp, 'fp_line')) {
+        if (!onSilk(ln)) continue;
+        const s = child(ln, 'start'), e = child(ln, 'end');
+        if (s && e) silkBucket.paths.push({ pts: [tp(num(s[1]), num(s[2])), tp(num(e[1]), num(e[2]))], closed: false });
+      }
+      for (const rc of children(fp, 'fp_rect')) {
+        if (!onSilk(rc)) continue;
+        const s = child(rc, 'start'), e = child(rc, 'end');
+        if (s && e) { const a = tp(num(s[1]), num(s[2])), b = tp(num(e[1]), num(s[2])), c2 = tp(num(e[1]), num(e[2])), d2 = tp(num(s[1]), num(e[2])); silkBucket.paths.push({ pts: [a, b, c2, d2], closed: true }); }
+      }
+      for (const ci of children(fp, 'fp_circle')) {
+        if (!onSilk(ci)) continue;
+        const c = child(ci, 'center'), e = child(ci, 'end');
+        if (c && e) { const r2 = Math.hypot(num(e[1]) - num(c[1]), num(e[2]) - num(c[2])); silkBucket.paths.push({ pts: circleLocal(c, r2, tp), closed: true }); }
+      }
+      for (const ar of children(fp, 'fp_arc')) {
+        if (!onSilk(ar)) continue;
+        const s = child(ar, 'start'), m = child(ar, 'mid'), e = child(ar, 'end');
+        if (s && m && e) { const out = [tp(num(s[1]), num(s[2]))]; arc3(tp(num(s[1]), num(s[2])), tp(num(m[1]), num(m[2])), tp(num(e[1]), num(e[2])), out); silkBucket.paths.push({ pts: out, closed: false }); }
+      }
+      for (const pl of children(fp, 'fp_poly')) {
+        if (!onSilk(pl)) continue;
+        const ptsNode = child(pl, 'pts'); if (!ptsNode) continue;
+        const pts = children(ptsNode, 'xy').map(p => tp(num(p[1]), num(p[2])));
+        if (pts.length > 2) silkBucket.paths.push({ pts, closed: true });
       }
     }
 
@@ -208,12 +265,35 @@
       outline = { paths, bounds: { minX, minY, maxX, maxY }, source: 'kicad' };
     }
 
+    // vias -> through holes
+    for (const via of children(root, 'via')) {
+      const at = child(via, 'at'), dr = child(via, 'drill');
+      if (at && dr) { const dd = num(dr[1]); if (dd > 0) holes.push({ x: num(at[1]), y: -num(at[2]), d: dd }); }
+    }
+    // board-level silk graphics
+    const idn = (x, y) => ({ x, y: -y });
+    for (const ln of children(root, 'gr_line')) {
+      if (!onSilk(ln)) continue;
+      const s = child(ln, 'start'), e = child(ln, 'end');
+      const bucket = /B\./i.test(str(child(ln, 'layer')[1]) || '') ? silkBot : silkTop;
+      if (s && e) bucket.paths.push({ pts: [idn(num(s[1]), num(s[2])), idn(num(e[1]), num(e[2]))], closed: false });
+    }
+
+    let drill = null;
+    if (holes.length) {
+      let mnX = Infinity, mnY = Infinity, mxX = -Infinity, mxY = -Infinity;
+      for (const h of holes) { mnX = Math.min(mnX, h.x); mxX = Math.max(mxX, h.x); mnY = Math.min(mnY, h.y); mxY = Math.max(mxY, h.y); }
+      drill = { holes, bounds: { minX: mnX, minY: mnY, maxX: mxX, maxY: mxY } };
+    }
+
     const bomRows = [...bomMap.values()];
-    bomRows.sort((a, b) => a.designators.length - b.designators.length);
+    bomRows.sort((a, b) => (a.dnp ? 1 : 0) - (b.dnp ? 1 : 0) || a.designators.length - b.designators.length);
     return {
       bomRows, cplMap, outline,
       pads: { top: padsTop.pads.length || padsTop.regions.length ? padsTop : null, bottom: padsBot.pads.length ? padsBot : null },
-      stats: { footprints: fps.length },
+      silk: { top: silkTop.paths.length ? silkTop : null, bottom: silkBot.paths.length ? silkBot : null },
+      drill,
+      stats: { footprints: fps.length, dnp: Object.keys(dnpRefs).length },
     };
   }
 

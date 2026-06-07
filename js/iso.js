@@ -27,6 +27,8 @@
     this.svg = svg;
     this.comps = [];
     this.outline = null;
+    this.pads = null;
+    this.showPads = true;
     this.layer = 'top';
     this.selectedGroup = null;
     this.visible = null;
@@ -42,6 +44,8 @@
 
   IsoView.prototype.setComponents = function (c) { this.comps = c; this._computeCentre(); };
   IsoView.prototype.setOutline = function (geo) { this.outline = geo; this._computeCentre(); };
+  IsoView.prototype.setPads = function (p) { this.pads = p; };
+  IsoView.prototype.setShowPads = function (b) { this.showPads = b; this.render(); };
   IsoView.prototype.setLayer = function (l) { this.layer = l; this.render(true); };
   IsoView.prototype.setSelected = function (g) { this.selectedGroup = g; this.render(); };
   IsoView.prototype.setVisible = function (s) { this.visible = s; this.render(); };
@@ -92,6 +96,14 @@
 
     for (const poly of polys) parts.push(this._slab(poly, 0, this.thickness, COL.boardSide, COL.boardTop, COL.boardEdge));
 
+    // ----- pads on board surfaces -----
+    if (this.pads && this.showPads) {
+      if ((this.layer === 'top' || this.layer === 'both') && this.pads.top)
+        parts.push(this._padsSvg(this.pads.top, 0));
+      if ((this.layer === 'bottom' || this.layer === 'both') && this.pads.bottom)
+        parts.unshift(this._padsSvg(this.pads.bottom, -this.thickness));
+    }
+
     // ----- components, painter-sorted back -> front -----
     const list = this.comps.filter(c => this._layerVisible(c));
     const bottoms = list.filter(c => c.layer === 'bottom').sort((a, b) => (a.x + a.y) - (b.x + b.y));
@@ -125,6 +137,26 @@
     s += `<polygon points="${ptsStr(top)}" fill="${topCol}" stroke="${edge}" stroke-width="1.2" vector-effect="non-scaling-stroke"/>`;
     s += `</g>`;
     return s;
+  };
+
+  IsoView.prototype._padsSvg = function (L, z) {
+    const fill = L.isPaste ? '#aab4be' : '#c4a048';
+    let s = `<g class="iso-pads" fill="${fill}">`;
+    const poly = (pts) => `<polygon points="${ptsStr(pts.map(p => this._p(p.x, p.y, z)))}"/>`;
+    if (L.regions) for (const rg of L.regions) if (rg.pts.length >= 3) s += poly(rg.pts);
+    for (const pad of L.pads) {
+      let pts;
+      if (pad.kind === 'rect' || pad.kind === 'obround') {
+        const hw = pad.w / 2, hh = pad.h / 2;
+        pts = [{ x: pad.x - hw, y: pad.y - hh }, { x: pad.x + hw, y: pad.y - hh }, { x: pad.x + hw, y: pad.y + hh }, { x: pad.x - hw, y: pad.y + hh }];
+      } else {
+        const r = (pad.d || 0.5) / 2, n = pad.kind === 'poly' ? Math.max(3, pad.n) : 8, rot = (pad.rot || 0) * Math.PI / 180;
+        pts = [];
+        for (let i = 0; i < n; i++) { const a = rot + i / n * Math.PI * 2; pts.push({ x: pad.x + r * Math.cos(a), y: pad.y + r * Math.sin(a) }); }
+      }
+      s += poly(pts);
+    }
+    return s + `</g>`;
   };
 
   IsoView.prototype._comp = function (c, z) {

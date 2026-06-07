@@ -5,7 +5,7 @@
   const state = {
     bomText: null, cplText: null,
     bomName: '', cplName: '',
-    gerberFiles: null, gerberName: '', outline: null,
+    gerberFiles: null, gerberName: '', outline: null, pads: null,
     model: null,
     selectedId: null,
     filterIds: null,
@@ -55,13 +55,18 @@
         files = [{ name: file.name, text: await file.text() }];
       }
       state.gerberFiles = files;
-      const outline = Gerber.outlineFromFiles(files);
-      state.outline = outline;
-      if (outline) {
-        $('gerberStatus').textContent = '✓ contorno: ' + outline.source.split('/').pop();
+      const layers = Gerber.layersFromFiles(files);
+      state.outline = layers.outline;
+      state.pads = layers.pads;
+      const padCount = (layers.pads.top ? layers.pads.top.pads.length : 0) + (layers.pads.bottom ? layers.pads.bottom.pads.length : 0);
+      if (layers.outline || padCount) {
+        const bits = [];
+        if (layers.outline) bits.push('contorno');
+        if (padCount) bits.push(padCount + ' piazzole');
+        $('gerberStatus').textContent = '✓ ' + bits.join(' · ');
         $('slotGerber').classList.add('loaded');
       } else {
-        $('gerberStatus').textContent = '⚠ nessun contorno riconosciuto';
+        $('gerberStatus').textContent = '⚠ nessun layer riconosciuto';
       }
     } catch (e) {
       console.error(e);
@@ -114,8 +119,10 @@
       }
       renderer.setComponents(model.drawable);
       renderer.setOutline(state.outline);
+      renderer.setPads(state.pads);
       iso.setComponents(model.drawable);
       iso.setOutline(state.outline);
+      iso.setPads(state.pads);
       iso.setLayer(state.layer);
       iso.setExplode(parseFloat($('explodeRange').value));
 
@@ -275,6 +282,8 @@
 
     $('explodeRange').addEventListener('input', e => { if (iso) iso.setExplode(parseFloat(e.target.value)); });
     $('exportSvgBtn').addEventListener('click', exportSvg);
+    $('exportHtmlBtn').addEventListener('click', exportStandalone);
+    $('showPads').addEventListener('change', e => { renderer.setShowPads(e.target.checked); if (iso) iso.setShowPads(e.target.checked); });
 
     $('zoomInBtn').addEventListener('click', () => (state.view === 'iso' ? iso.zoomBy(1.25) : renderer.zoomBy(1.25)));
     $('zoomOutBtn').addEventListener('click', () => (state.view === 'iso' ? iso.zoomBy(1 / 1.25) : renderer.zoomBy(1 / 1.25)));
@@ -292,20 +301,71 @@
     else renderer.resize();
   }
 
-  function exportSvg() {
-    if (!iso) return;
-    const blob = new Blob([iso.exportSVG()], { type: 'image/svg+xml' });
+  function download(content, name, type) {
+    const blob = new Blob([content], { type });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = (state.bomName ? state.bomName.replace(/\.[^.]+$/, '') : 'board') + '-iso.svg';
+    a.download = name;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  function exportSvg() {
+    if (!iso) return;
+    const base = state.bomName ? state.bomName.replace(/\.[^.]+$/, '') : 'board';
+    download(iso.exportSVG(), base + '-iso.svg', 'image/svg+xml');
+  }
+
+  const JS_FILES = ['csv.js', 'footprints.js', 'parsers.js', 'gerber.js', 'render.js', 'iso.js', 'bom.js', 'app.js'];
+
+  async function exportStandalone() {
+    try {
+      const htmlSrc = await (await fetch(location.href)).text();
+      const css = await (await fetch('css/style.css')).text();
+      const js = {};
+      for (const f of JS_FILES) js[f] = await (await fetch('js/' + f).then(r => { if (!r.ok) throw new Error('js/' + f); return r; })).text();
+
+      let html = htmlSrc.replace(/<link[^>]*href="css\/style\.css"[^>]*>/, () => `<style>\n${css}\n</style>`);
+
+      const data = {
+        bomText: state.bomText, cplText: state.cplText,
+        outline: state.outline, pads: state.pads,
+        name: state.bomName || 'board',
+      };
+      const json = JSON.stringify(data).replace(/</g, '\\u003c');
+      const embedTag = `<script>window.IBOM_EMBED=${json};<\/script>\n`;
+
+      for (const f of JS_FILES) {
+        const tag = `<script src="js/${f}"><\/script>`;
+        const safe = js[f].replace(/<\/script/gi, '<\\/script'); // avoid premature block close
+        const inline = `<script>\n${safe}\n<\/script>`;
+        html = html.replace(tag, () => (f === JS_FILES[0] ? embedTag + inline : inline));
+      }
+
+      const base = (state.bomName || 'board').replace(/\.[^.]+$/, '');
+      download(html, base + '-ibom.html', 'text/html;charset=utf-8');
+    } catch (e) {
+      console.error(e);
+      alert('Export HTML non riuscito (' + (e.message || e) + ').\n\n' +
+        'Questa funzione richiede di aprire il tool da un server (es. GitHub Pages o un server locale), ' +
+        'non con doppio click su file://.');
+    }
   }
 
   /* ---------- Sample ---------- */
   function loadSample() {
     state.bomText = SAMPLE.bom; state.cplText = SAMPLE.cpl;
     state.bomName = 'esempio.csv'; state.cplName = 'esempio_cpl.csv';
+    // simple rectangular outline so the example shows a real board contour
+    const r = { minX: 0, minY: 4, maxX: 42, maxY: 26 };
+    state.outline = {
+      paths: [{ closed: true, pts: [
+        { x: r.minX, y: r.minY }, { x: r.maxX, y: r.minY },
+        { x: r.maxX, y: r.maxY }, { x: r.minX, y: r.maxY },
+      ] }],
+      bounds: r, source: 'esempio',
+    };
+    state.pads = null;
     generate();
   }
 
@@ -347,4 +407,13 @@ SW1,38.0,10.0,top,0`,
   /* ---------- Init ---------- */
   wireLoader();
   wireApp();
+
+  // Standalone export: data embedded directly in the page -> auto-open.
+  if (window.IBOM_EMBED) {
+    const d = window.IBOM_EMBED;
+    state.bomText = d.bomText; state.cplText = d.cplText;
+    state.outline = d.outline || null; state.pads = d.pads || null;
+    state.bomName = d.name || 'board';
+    generate();
+  }
 })();

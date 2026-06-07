@@ -136,7 +136,7 @@
       if (!b) continue;
 
       // Extended (parameter) commands
-      if (b[0] === '%') b = b.replace(/%/g, '');
+      if (b[0] === '%') b = b.replace(/%/g, '').trim();
       if (b.startsWith('FS')) {
         zeroOmit = b.includes('FST') ? 'T' : 'L';
         const m = b.match(/X(\d)(\d)/);
@@ -222,5 +222,116 @@
     return geo;
   }
 
-  global.Gerber = { unzip, parse, pickOutline, outlineFromFiles };
+  /* ---------------- Pad layer parser (copper / paste) ---------------- */
+  function resolveAperture(template, paramStr) {
+    const p = paramStr ? paramStr.split('X').map(s => parseFloat(s)) : [];
+    switch ((template || '').toUpperCase()) {
+      case 'C': return { kind: 'circle', d: p[0] || 0.5 };
+      case 'R': return { kind: 'rect', w: p[0] || 0.5, h: p[1] || p[0] || 0.5 };
+      case 'O': return { kind: 'obround', w: p[0] || 0.5, h: p[1] || p[0] || 0.5 };
+      case 'P': return { kind: 'poly', d: p[0] || 0.5, n: Math.round(p[1] || 3), rot: p[2] || 0 };
+      default:  return { kind: 'circle', d: p[0] || 1 }; // macro / unknown -> approx
+    }
+  }
+
+  function parseLayer(text) {
+    let fmtInt = 3, fmtDec = 6, zeroOmit = 'L', unitScale = 1;
+    let cur = { x: 0, y: 0 }, mode = 'G01', inRegion = false, curAp = null;
+    const apertures = {};
+    const pads = [];      // {x,y,kind,...}
+    const regions = [];   // {pts}
+    let region = null;
+
+    const parseCoord = (s) => {
+      let sign = 1;
+      if (s[0] === '+') s = s.slice(1); else if (s[0] === '-') { sign = -1; s = s.slice(1); }
+      const total = fmtInt + fmtDec;
+      if (zeroOmit === 'T') s = (s + '0'.repeat(total)).slice(0, total);
+      return sign * (parseInt(s, 10) || 0) / Math.pow(10, fmtDec) * unitScale;
+    };
+    const addArc = (nx, ny, i, j, cw, target) => {
+      const cx = cur.x + i, cy = cur.y + j;
+      const r = Math.hypot(cur.x - cx, cur.y - cy);
+      let a0 = Math.atan2(cur.y - cy, cur.x - cx), a1 = Math.atan2(ny - cy, nx - cx);
+      if (cw) { if (a1 >= a0) a1 -= 2 * Math.PI; } else { if (a1 <= a0) a1 += 2 * Math.PI; }
+      const steps = Math.max(2, Math.ceil(Math.abs(a1 - a0) / (Math.PI / 90)));
+      for (let k = 1; k <= steps; k++) { const a = a0 + (a1 - a0) * (k / steps); target.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) }); }
+    };
+
+    for (let raw of text.replace(/\r/g, '').split('*')) {
+      let b = raw.trim(); if (!b) continue;
+      if (b[0] === '%') b = b.replace(/%/g, '').trim();
+      if (b.startsWith('FS')) { zeroOmit = b.includes('FST') ? 'T' : 'L'; const m = b.match(/X(\d)(\d)/); if (m) { fmtInt = +m[1]; fmtDec = +m[2]; } continue; }
+      if (b.startsWith('MO')) { unitScale = b.includes('IN') ? 25.4 : 1; continue; }
+      if (b.startsWith('ADD')) {
+        const m = b.match(/^ADD(\d+)([A-Za-z_$][\w$.\-]*)?(?:,(.*))?$/);
+        if (m) apertures[+m[1]] = resolveAperture(m[2], m[3]);
+        continue;
+      }
+      if (/^(AM|AB|LP|LN|LM|LR|LS|TF|TA|TO|TD|SR|IP|AS|IR|MI|OF|SF|MO)/.test(b)) continue;
+      if (b.startsWith('G04')) continue;
+
+      if (/G36/.test(b)) { inRegion = true; region = null; }
+      if (/G37/.test(b)) { if (region && region.pts.length > 2) regions.push(region); region = null; inRegion = false; continue; }
+      if (/G01/.test(b)) mode = 'G01';
+      if (/G02/.test(b)) mode = 'G02';
+      if (/G03/.test(b)) mode = 'G03';
+
+      const md = b.match(/D(\d+)/);
+      if (md) { const d = +md[1]; if (d >= 10) { curAp = d; if (!/[XY]/.test(b)) continue; } }
+
+      const mx = b.match(/X([+-]?\d+)/), my = b.match(/Y([+-]?\d+)/);
+      const mi = b.match(/I([+-]?\d+)/), mj = b.match(/J([+-]?\d+)/);
+      if (!mx && !my && !md) continue;
+      const nx = mx ? parseCoord(mx[1]) : cur.x, ny = my ? parseCoord(my[1]) : cur.y;
+      const op = md ? +md[1] : null;
+
+      if (inRegion) {
+        if (op === 2 || region === null) { if (region && region.pts.length > 2) regions.push(region); region = { pts: [{ x: nx, y: ny }] }; }
+        else if (op === 1) { if (mode === 'G01') region.pts.push({ x: nx, y: ny }); else addArc(nx, ny, mi ? parseCoord(mi[1]) : 0, mj ? parseCoord(mj[1]) : 0, mode === 'G02', region.pts); }
+      } else if (op === 3) {
+        const ap = apertures[curAp];
+        if (ap) pads.push(Object.assign({ x: nx, y: ny }, ap));
+      }
+      cur = { x: nx, y: ny };
+      if (/M02|M00/.test(b)) break;
+    }
+    if (region && region.pts.length > 2) regions.push(region);
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const ext = (x, y) => { minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y); };
+    for (const p of pads) { const r = (p.d || Math.max(p.w || 0, p.h || 0)) / 2; ext(p.x - r, p.y - r); ext(p.x + r, p.y + r); }
+    for (const rg of regions) for (const pt of rg.pts) ext(pt.x, pt.y);
+    return { pads, regions, bounds: { minX, minY, maxX, maxY } };
+  }
+
+  function pickLayers(files) {
+    const find = (re) => files.find(f => re.test(f.name.toLowerCase()));
+    return {
+      outlineF: pickOutline(files),
+      pasteTop: find(/(^|[^a-z])f[_.\- ]?paste|top.?paste|paste.?top|\.gtp$/),
+      pasteBot: find(/(^|[^a-z])b[_.\- ]?paste|bot.?paste|paste.?bot|\.gbp$/),
+      copperTop: find(/(^|[^a-z])f[_.\- ]?cu|top.?copper|copper.?top|\.gtl$/),
+      copperBot: find(/(^|[^a-z])b[_.\- ]?cu|bot.?copper|copper.?bot|\.gbl$/),
+    };
+  }
+
+  /* High-level: outline + pads (top/bottom) from a set of gerber files. */
+  function layersFromFiles(files) {
+    const L = pickLayers(files);
+    const outline = L.outlineF ? Object.assign(parse(L.outlineF.text) || {}, { source: L.outlineF.name }) : null;
+    const side = (pasteF, copperF) => {
+      const f = pasteF || copperF;
+      if (!f) return null;
+      const g = parseLayer(f.text);
+      g.source = f.name; g.isPaste = !!pasteF;
+      return g;
+    };
+    return {
+      outline: (outline && outline.paths) ? outline : null,
+      pads: { top: side(L.pasteTop, L.copperTop), bottom: side(L.pasteBot, L.copperBot) },
+    };
+  }
+
+  global.Gerber = { unzip, parse, parseLayer, pickOutline, pickLayers, outlineFromFiles, layersFromFiles };
 })(window);

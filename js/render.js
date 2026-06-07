@@ -27,11 +27,15 @@
     this.dpr = window.devicePixelRatio || 1;
     this.onHover = null;
     this.outline = null;
+    this.pads = null;
+    this.showPads = true;
     this._bindEvents();
   }
 
   Renderer.prototype.setComponents = function (comps) { this.comps = comps; };
   Renderer.prototype.setOutline = function (geo) { this.outline = geo; };
+  Renderer.prototype.setPads = function (pads) { this.pads = pads; };
+  Renderer.prototype.setShowPads = function (b) { this.showPads = b; this.draw(); };
   Renderer.prototype.setLayer = function (l) { this.layer = l; this.fit(); };
   Renderer.prototype.setSelected = function (g) { this.selectedGroup = g; this.draw(); };
   Renderer.prototype.setVisible = function (set) { this.visible = set; this.draw(); };
@@ -135,6 +139,15 @@
       ctx.fill(); ctx.stroke();
     }
 
+    // copper / paste pads
+    if (this.pads && this.showPads) {
+      for (const layer of ['top', 'bottom']) {
+        if (this.layer !== 'both' && this.layer !== layer) continue;
+        const L = this.pads[layer];
+        if (L) this._drawPads(ctx, L);
+      }
+    }
+
     // components
     for (const c of this.comps) {
       if (!this._layerVisible(c)) continue;
@@ -184,6 +197,37 @@
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(c.ref, p.x, p.y);
       ctx.restore();
+    }
+  };
+
+  Renderer.prototype._drawPads = function (ctx, L) {
+    const s = this.scale;
+    ctx.fillStyle = L.isPaste ? 'rgba(170,180,190,0.85)' : 'rgba(196,160,72,0.9)';
+    // regions
+    if (L.regions) for (const rg of L.regions) {
+      if (rg.pts.length < 3) continue;
+      ctx.beginPath();
+      const p0 = this.w2s(rg.pts[0].x, rg.pts[0].y);
+      ctx.moveTo(p0.x, p0.y);
+      for (let i = 1; i < rg.pts.length; i++) { const p = this.w2s(rg.pts[i].x, rg.pts[i].y); ctx.lineTo(p.x, p.y); }
+      ctx.closePath(); ctx.fill();
+    }
+    // flashed pads
+    for (const pad of L.pads) {
+      const p = this.w2s(pad.x, pad.y);
+      if (pad.kind === 'circle') {
+        ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(pad.d * s / 2, 0.5), 0, Math.PI * 2); ctx.fill();
+      } else if (pad.kind === 'rect') {
+        ctx.fillRect(p.x - pad.w * s / 2, p.y - pad.h * s / 2, pad.w * s, pad.h * s);
+      } else if (pad.kind === 'obround') {
+        roundRect(ctx, p.x - pad.w * s / 2, p.y - pad.h * s / 2, pad.w * s, pad.h * s, Math.min(pad.w, pad.h) * s / 2);
+        ctx.fill();
+      } else if (pad.kind === 'poly') {
+        const r = pad.d * s / 2, n = Math.max(3, pad.n), rot = (pad.rot || 0) * Math.PI / 180;
+        ctx.beginPath();
+        for (let i = 0; i < n; i++) { const a = rot + i / n * Math.PI * 2; const X = p.x + r * Math.cos(a), Y = p.y - r * Math.sin(a); i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); }
+        ctx.closePath(); ctx.fill();
+      }
     }
   };
 

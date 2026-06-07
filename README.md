@@ -14,8 +14,12 @@ Carichi il **BOM** e il **Pick & Place (CPL)** esportati dal tuo EDA e ottieni:
   (localStorage) — riprendi da dove avevi lasciato;
 - **contorno reale della scheda** dai file **Gerber** (puoi trascinare
   direttamente lo **.zip** di JLCPCB: viene scompattato nel browser);
+- **piazzole** (pad SMD) dai layer rame/pasta dei Gerber, disegnate sotto i
+  componenti — vedi esattamente dove saldare;
 - **vista isometrica "esplosa"** in SVG, con slider di esplosione ed
-  esportazione in file `.svg`.
+  esportazione in file `.svg`;
+- **export in singolo file HTML autonomo**: consegni un solo `.html` a chi
+  assembla, con tutto incluso (codice + dati), nessun file esterno necessario.
 
 Tutto gira **nel browser, senza installazione e senza backend**: nessun dato lascia
 il tuo computer.
@@ -62,17 +66,31 @@ come immagine vettoriale.
   (`Edge_Cuts`, `.GKO`, `.GM1`, *Outline*…). Lo ZIP viene scompattato in locale
   con l'API nativa `DecompressionStream` (nessuna libreria esterna). Se non
   carichi i Gerber, il contorno è il bounding box dei componenti.
-- Il parser Gerber copre quanto serve al profilo: formato/unità, selezione
-  apertura, interpolazione lineare e circolare (archi), regioni (G36/G37). Non
-  rende ancora le piazzole rame.
+- Il parser Gerber copre formato/unità, definizione/selezione apertura
+  (C/R/O/P), interpolazione lineare e circolare (archi), flash (D03) e regioni
+  (G36/G37). Le **piazzole** vengono prese dai layer di **pasta** (`.GTP/.GBP`)
+  se presenti — i più puliti per l'assemblaggio — altrimenti dal **rame**
+  (`.GTL/.GBL`). Le macro di apertura (`AM`) sono approssimate a un cerchio.
 - Un componente presente nel BOM ma assente nel CPL viene contato come "senza
   posizione" e non disegnato (segnalato nella barra info).
 
+## Export HTML autonomo
+
+Il pulsante **⬇ HTML** (in alto a destra nella barra della board) genera un
+singolo file `.html` con dentro il tool e i dati del progetto (BOM, CPL,
+contorno e piazzole). Lo puoi inviare a chiunque: lo apre con un doppio click e
+ottiene il BOM interattivo completo, senza i CSV originali.
+
+> Nota: l'export legge i propri sorgenti via `fetch`, quindi va usato quando il
+> tool è servito da un server (GitHub Pages o un server locale), non aperto con
+> `file://`.
+
 ## Roadmap
 
-- [x] Fase 2: parsing dei **Gerber** per il contorno scheda + vista isometrica.
-- [ ] Rendering delle **piazzole** (layer rame/pasta) sotto i componenti.
-- [ ] Esportazione in singolo file HTML autonomo.
+- [x] Fase 2: parsing dei **Gerber** (contorno) + vista isometrica.
+- [x] Rendering delle **piazzole** (layer rame/pasta) sotto i componenti.
+- [x] Esportazione in singolo file HTML autonomo.
+- [ ] Macro di apertura Gerber (`AM`) per pad di forma complessa.
 - [ ] Supporto diretto file nativi (`.kicad_pcb`).
 
 ## Struttura

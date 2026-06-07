@@ -21,7 +21,13 @@ Carichi il **BOM** e il **Pick & Place (CPL)** esportati dal tuo EDA e ottieni:
 - **export in singolo file HTML autonomo**: consegni un solo `.html` a chi
   assembla, con tutto incluso (codice + dati), nessun file esterno necessario;
 - **caricamento nativo `.kicad_pcb`**: da un solo file KiCad ricava BOM,
-  posizioni, contorno e piazzole — non servono CSV né Gerber.
+  posizioni, contorno, piazzole, serigrafia, fori e flag DNP;
+- **piazzole del componente selezionato** evidenziate (click su una riga →
+  solo le sue piazzole si illuminano), sia in 2D sia in isometrico;
+- **serigrafia** e **fori di foratura** (drill) disegnati sulla scheda, con
+  relativi toggle;
+- **componenti DNP** (Do Not Place) riconosciuti, segnalati con badge ed
+  esclusi dal conteggio di montaggio (toggle per mostrarli/nasconderli).
 
 Tutto gira **nel browser, senza installazione e senza backend**: nessun dato lascia
 il tuo computer.
@@ -96,9 +102,12 @@ ottiene il BOM interattivo completo, senza i CSV originali.
 - [x] Esportazione in singolo file HTML autonomo.
 - [x] Macro di apertura Gerber (`AM`) per pad di forma complessa.
 - [x] Supporto diretto file nativi (`.kicad_pcb`).
-- [ ] Evidenziare le **piazzole del singolo componente** selezionato.
-- [ ] Serigrafia (silkscreen) e fori di foratura (drill).
-- [ ] Gestione varianti / componenti DNP (Do Not Place).
+- [x] Evidenziare le **piazzole del singolo componente** selezionato.
+- [x] Serigrafia (silkscreen) e fori di foratura (drill).
+- [x] Gestione varianti / componenti DNP (Do Not Place).
+- [ ] Net highlighting (click pad → evidenzia la net).
+- [ ] Doppia vista top+bottom affiancata e sincronizzata.
+- [ ] Import Altium / Eagle / Fusion.
 
 ## Struttura
 

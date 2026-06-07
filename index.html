@@ -39,6 +39,13 @@
           <div class="slot-label">Pick &amp; Place (CPL) CSV</div>
           <div class="slot-status" id="cplStatus">Nessun file</div>
         </label>
+
+        <label class="file-slot" id="slotGerber">
+          <input type="file" id="gerberInput" accept=".zip,.gbr,.gko,.gm1,.gml,.txt" hidden />
+          <div class="slot-icon">🗺️</div>
+          <div class="slot-label">Gerber / ZIP <span class="muted">(opz.)</span></div>
+          <div class="slot-status" id="gerberStatus">Per il contorno scheda</div>
+        </label>
       </div>
 
       <p class="hint muted">Suggerimento: in EasyEDA usa <em>Fabbricazione → BOM</em> e <em>Pick and Place file</em>. In KiCad esporta il BOM e il file di posizionamento (.pos) in CSV.</p>
@@ -86,13 +93,22 @@
 
     <section class="canvas-area">
       <div class="canvas-toolbar">
+        <div class="view-toggle">
+          <button class="view-btn active" data-view="2d">2D</button>
+          <button class="view-btn" data-view="iso">Isometrico</button>
+        </div>
         <button class="btn btn-ghost" id="zoomInBtn" title="Zoom +">＋</button>
         <button class="btn btn-ghost" id="zoomOutBtn" title="Zoom −">－</button>
         <button class="btn btn-ghost" id="fitBtn" title="Adatta alla vista">⤢ Fit</button>
+        <label class="chk-inline iso-only hidden">Esplodi
+          <input type="range" id="explodeRange" min="0" max="1" step="0.02" value="0.6" />
+        </label>
+        <button class="btn btn-ghost iso-only hidden" id="exportSvgBtn" title="Esporta vista isometrica in SVG">⬇ SVG</button>
         <span class="canvas-info" id="canvasInfo"></span>
         <label class="chk-inline"><input type="checkbox" id="showRefs" /> Mostra ref</label>
       </div>
       <canvas id="board"></canvas>
+      <svg id="isoView" class="iso-svg hidden" xmlns="http://www.w3.org/2000/svg"></svg>
       <div id="tooltip" class="tooltip hidden"></div>
     </section>
   </main>
@@ -100,7 +116,9 @@
   <script src="js/csv.js"></script>
   <script src="js/footprints.js"></script>
   <script src="js/parsers.js"></script>
+  <script src="js/gerber.js"></script>
   <script src="js/render.js"></script>
+  <script src="js/iso.js"></script>
   <script src="js/bom.js"></script>
   <script src="js/app.js"></script>
 </body>

@@ -26,10 +26,12 @@
     this.scale = 1; this.offX = 0; this.offY = 0;
     this.dpr = window.devicePixelRatio || 1;
     this.onHover = null;
+    this.outline = null;
     this._bindEvents();
   }
 
   Renderer.prototype.setComponents = function (comps) { this.comps = comps; };
+  Renderer.prototype.setOutline = function (geo) { this.outline = geo; };
   Renderer.prototype.setLayer = function (l) { this.layer = l; this.fit(); };
   Renderer.prototype.setSelected = function (g) { this.selectedGroup = g; this.draw(); };
   Renderer.prototype.setVisible = function (set) { this.visible = set; this.draw(); };
@@ -57,6 +59,10 @@
 
   Renderer.prototype._bounds = function () {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, any = false;
+    if (this.outline) {
+      const b = this.outline.bounds;
+      minX = b.minX; minY = b.minY; maxX = b.maxX; maxY = b.maxY; any = true;
+    }
     for (const c of this.comps) {
       if (!this._layerVisible(c)) continue;
       any = true;
@@ -103,9 +109,23 @@
     ctx.scale(this.dpr, this.dpr);
     ctx.clearRect(0, 0, this.cssW, this.cssH);
 
-    // board background rectangle from bounds (pseudo-outline)
     const b = this._bounds();
-    if (b) {
+    if (this.outline) {
+      // real board outline from gerber
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = '#1f6f47';
+      ctx.fillStyle = '#0e1f17';
+      for (const p of this.outline.paths) {
+        if (p.pts.length < 2) continue;
+        ctx.beginPath();
+        const s0 = this.w2s(p.pts[0].x, p.pts[0].y);
+        ctx.moveTo(s0.x, s0.y);
+        for (let i = 1; i < p.pts.length; i++) { const s = this.w2s(p.pts[i].x, p.pts[i].y); ctx.lineTo(s.x, s.y); }
+        if (p.closed) { ctx.closePath(); ctx.fill(); }
+        ctx.stroke();
+      }
+    } else if (b) {
+      // pseudo-outline: bounding box
       const p1 = this.w2s(b.minX, b.maxY), p2 = this.w2s(b.maxX, b.minY);
       const x = Math.min(p1.x, p2.x), y = Math.min(p1.y, p2.y);
       ctx.fillStyle = '#10161d';

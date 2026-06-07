@@ -5,14 +5,17 @@
   const state = {
     bomText: null, cplText: null,
     bomName: '', cplName: '',
+    gerberFiles: null, gerberName: '', outline: null,
     model: null,
     selectedId: null,
     filterIds: null,
     layer: 'top',
+    view: '2d',
     sig: null,
   };
 
   let renderer = null;
+  let iso = null;
 
   /* ---------- File loading ---------- */
   function readFile(file, cb) {
@@ -39,14 +42,44 @@
     });
   }
 
+  async function setGerberFile(file) {
+    showLoaderError('');
+    state.gerberName = file.name;
+    $('gerberStatus').textContent = 'Lettura…';
+    try {
+      let files;
+      if (/\.zip$/i.test(file.name)) {
+        const buf = await file.arrayBuffer();
+        files = await Gerber.unzip(buf);
+      } else {
+        files = [{ name: file.name, text: await file.text() }];
+      }
+      state.gerberFiles = files;
+      const outline = Gerber.outlineFromFiles(files);
+      state.outline = outline;
+      if (outline) {
+        $('gerberStatus').textContent = '✓ contorno: ' + outline.source.split('/').pop();
+        $('slotGerber').classList.add('loaded');
+      } else {
+        $('gerberStatus').textContent = '⚠ nessun contorno riconosciuto';
+      }
+    } catch (e) {
+      console.error(e);
+      $('gerberStatus').textContent = '⚠ errore lettura';
+      showLoaderError('Gerber: ' + (e.message || e));
+    }
+  }
+
   // Heuristic: which slot does a dropped file belong to?
   function classifyAndAssign(file) {
     const name = file.name.toLowerCase();
-    if (/cpl|pick|place|pos|cpl|placement|position/.test(name)) return setCplFile(file);
+    if (/\.zip$|\.gko$|\.gm\d|\.gml$|gerber|edge|outline/.test(name)) return setGerberFile(file);
+    if (/cpl|pick|place|pos|placement|position/.test(name)) return setCplFile(file);
     if (/bom/.test(name)) return setBomFile(file);
     // fallback: fill empty slot, bom first
     if (!state.bomText) return setBomFile(file);
-    return setCplFile(file);
+    if (!state.cplText) return setCplFile(file);
+    return setGerberFile(file);
   }
 
   function updateGenerateBtn() {
@@ -73,9 +106,19 @@
         renderer = new Renderer($('board'), $('tooltip'));
         renderer.onClick = (c) => selectGroup(c.groupId, true);
         renderer.onHover = (c) => { /* reserved */ };
-        window.addEventListener('resize', () => renderer.resize());
+        window.addEventListener('resize', () => { renderer.resize(); if (state.view === 'iso') iso.render(); });
+      }
+      if (!iso) {
+        iso = new IsoView($('isoView'));
+        iso.onClick = (gid) => selectGroup(gid, true);
       }
       renderer.setComponents(model.drawable);
+      renderer.setOutline(state.outline);
+      iso.setComponents(model.drawable);
+      iso.setOutline(state.outline);
+      iso.setLayer(state.layer);
+      iso.setExplode(parseFloat($('explodeRange').value));
+
       renderer.resize();
       renderer.setLayer(state.layer);
 
@@ -92,6 +135,7 @@
   function updateCanvasInfo() {
     const m = state.model;
     let txt = `${m.components.length} componenti · ${m.groups.length} gruppi`;
+    if (state.outline) txt += ' · contorno Gerber';
     if (m.missing) txt += ` · ⚠ ${m.missing} senza posizione (assenti nel CPL)`;
     $('canvasInfo').textContent = txt;
   }
@@ -100,6 +144,7 @@
   function selectGroup(id, scrollIntoView) {
     state.selectedId = (state.selectedId === id) ? null : id;
     renderer.setSelected(state.selectedId);
+    iso.setSelected(state.selectedId);
     refreshTable();
     if (scrollIntoView && state.selectedId != null) {
       const row = document.querySelector(`tr[data-gid="${state.selectedId}"]`);
@@ -110,7 +155,7 @@
   /* ---------- Filtering / search ---------- */
   function applyFilter() {
     const q = $('searchInput').value.trim().toLowerCase();
-    if (!q) { state.filterIds = null; renderer.setVisible(null); return; }
+    if (!q) { state.filterIds = null; renderer.setVisible(null); if (iso) iso.setVisible(null); return; }
     const ids = new Set();
     const refs = new Set();
     for (const g of state.model.groups) {
@@ -119,6 +164,7 @@
     }
     state.filterIds = ids;
     renderer.setVisible(refs);
+    if (iso) iso.setVisible(refs);
   }
 
   function refreshTable() {
@@ -149,11 +195,13 @@
       g.comps.forEach(c => c.done = g.done);
     }
   }
+  function redrawViews() { renderer.draw(); if (iso) iso.render(); }
+
   function setDone(id, val) {
     const g = state.model.groups.find(x => x.id === id);
     if (!g) return;
     g.done = val; g.comps.forEach(c => c.done = val);
-    saveProgress(); updateProgress(); refreshTable(); renderer.draw();
+    saveProgress(); updateProgress(); refreshTable(); redrawViews();
   }
   function updateProgress() {
     const groups = state.model.groups;
@@ -168,6 +216,7 @@
   function wireLoader() {
     $('bomInput').addEventListener('change', e => e.target.files[0] && setBomFile(e.target.files[0]));
     $('cplInput').addEventListener('change', e => e.target.files[0] && setCplFile(e.target.files[0]));
+    $('gerberInput').addEventListener('change', e => e.target.files[0] && setGerberFile(e.target.files[0]));
     $('generateBtn').addEventListener('click', generate);
     $('sampleBtn').addEventListener('click', loadSample);
     $('loadBtn').addEventListener('click', () => {
@@ -205,20 +254,52 @@
     $('checkAll').addEventListener('change', (e) => {
       const val = e.target.checked;
       for (const g of state.model.groups) { g.done = val; g.comps.forEach(c => c.done = val); }
-      saveProgress(); updateProgress(); refreshTable(); renderer.draw();
+      saveProgress(); updateProgress(); refreshTable(); redrawViews();
     });
 
     $('resetProgressBtn').addEventListener('click', () => {
       if (!state.model) return;
       if (!confirm('Azzerare tutto l’avanzamento del montaggio?')) return;
       for (const g of state.model.groups) { g.done = false; g.comps.forEach(c => c.done = false); }
-      saveProgress(); updateProgress(); refreshTable(); renderer.draw();
+      saveProgress(); updateProgress(); refreshTable(); redrawViews();
     });
 
-    $('zoomInBtn').addEventListener('click', () => renderer.zoomBy(1.25));
-    $('zoomOutBtn').addEventListener('click', () => renderer.zoomBy(1 / 1.25));
-    $('fitBtn').addEventListener('click', () => renderer.fit());
-    $('showRefs').addEventListener('change', e => renderer.setShowRefs(e.target.checked));
+    // view toggle 2D / isometric
+    document.querySelectorAll('.view-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.view-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        setView(btn.dataset.view);
+      });
+    });
+
+    $('explodeRange').addEventListener('input', e => { if (iso) iso.setExplode(parseFloat(e.target.value)); });
+    $('exportSvgBtn').addEventListener('click', exportSvg);
+
+    $('zoomInBtn').addEventListener('click', () => (state.view === 'iso' ? iso.zoomBy(1.25) : renderer.zoomBy(1.25)));
+    $('zoomOutBtn').addEventListener('click', () => (state.view === 'iso' ? iso.zoomBy(1 / 1.25) : renderer.zoomBy(1 / 1.25)));
+    $('fitBtn').addEventListener('click', () => (state.view === 'iso' ? iso.fit() : renderer.fit()));
+    $('showRefs').addEventListener('change', e => { renderer.setShowRefs(e.target.checked); if (iso) iso.setShowRefs(e.target.checked); });
+  }
+
+  function setView(v) {
+    state.view = v;
+    const isIso = v === 'iso';
+    $('board').classList.toggle('hidden', isIso);
+    $('isoView').classList.toggle('hidden', !isIso);
+    document.querySelectorAll('.iso-only').forEach(el => el.classList.toggle('hidden', !isIso));
+    if (isIso) iso.render(true);
+    else renderer.resize();
+  }
+
+  function exportSvg() {
+    if (!iso) return;
+    const blob = new Blob([iso.exportSVG()], { type: 'image/svg+xml' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = (state.bomName ? state.bomName.replace(/\.[^.]+$/, '') : 'board') + '-iso.svg';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
   /* ---------- Sample ---------- */

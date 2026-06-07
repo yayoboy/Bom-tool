@@ -66,7 +66,7 @@ body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 .loader-card.dragover { border-color: var(--accent); background: #182233; }
 .loader-card h1 { margin: 0 0 6px; font-size: 22px; }
 
-.file-slots { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 28px 0 18px; }
+.file-slots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 28px 0 18px; }
 .file-slot {
   border: 1px dashed var(--border); border-radius: 10px; padding: 22px 14px; cursor: pointer;
   display: flex; flex-direction: column; align-items: center; gap: 6px;
@@ -139,6 +139,16 @@ body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 .chk-inline { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 4px; }
 #board { flex: 1; width: 100%; display: block; background: #0a0d11; cursor: grab; }
 #board.panning { cursor: grabbing; }
+.iso-svg { flex: 1; width: 100%; display: block; background: #0a0d11; cursor: grab; }
+
+/* View + iso controls */
+.view-toggle { display: flex; gap: 4px; margin-right: 6px; }
+.view-btn {
+  padding: 6px 12px; border: 1px solid var(--border); background: var(--bg);
+  color: var(--muted); border-radius: 6px; cursor: pointer; font-size: 12px;
+}
+.view-btn.active { background: var(--accent-2); border-color: var(--accent); color: #fff; }
+.canvas-toolbar input[type="range"] { width: 100px; accent-color: var(--accent); }
 
 .tooltip {
   position: absolute; pointer-events: none; background: var(--bg-elev-2);

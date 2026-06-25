@@ -363,6 +363,14 @@
     $('explodeRange').addEventListener('input', e => { if (iso) iso.setExplode(parseFloat(e.target.value)); });
     $('exportSvgBtn').addEventListener('click', exportSvg);
     $('exportHtmlBtn').addEventListener('click', exportStandalone);
+    $('stencilBtn').addEventListener('click', openStencil);
+    $('stencilClose').addEventListener('click', closeStencil);
+    $('stencilCancel').addEventListener('click', closeStencil);
+    $('stencilModal').addEventListener('click', e => { if (e.target === $('stencilModal')) closeStencil(); });
+    $('stStencilSide').addEventListener('change', e => { $('stMirror').checked = e.target.value === 'bottom'; refreshStencilInfo(); });
+    $('stReduction').addEventListener('input', refreshStencilInfo);
+    $('stMirror').addEventListener('change', refreshStencilInfo);
+    $('stencilExport').addEventListener('click', exportStencil);
     $('showPads').addEventListener('change', e => { renderer.setShowPads(e.target.checked); if (iso) iso.setShowPads(e.target.checked); });
     $('showSilk').addEventListener('change', e => { renderer.setShowSilk(e.target.checked); if (iso) iso.setShowSilk(e.target.checked); });
     $('showDrill').addEventListener('change', e => { renderer.setShowDrill(e.target.checked); if (iso) iso.setShowDrill(e.target.checked); });
@@ -399,7 +407,64 @@
     download(iso.exportSVG(), base + '-iso.svg', 'image/svg+xml');
   }
 
-  const JS_FILES = ['csv.js', 'footprints.js', 'parsers.js', 'gerber.js', 'kicad.js', 'render.js', 'iso.js', 'bom.js', 'app.js'];
+  /* ---------- Stencil ---------- */
+  function pasteAvailable(side) {
+    const L = state.pads && state.pads[side];
+    return !!(L && ((L.pads && L.pads.length) || (L.regions && L.regions.length)));
+  }
+
+  function openStencil() {
+    $('stencilErr').textContent = '';
+    // pick a side that actually has data
+    const sideSel = $('stStencilSide');
+    if (!pasteAvailable('top') && pasteAvailable('bottom')) sideSel.value = 'bottom';
+    $('stMirror').checked = sideSel.value === 'bottom';
+    $('stencilModal').classList.remove('hidden');
+    refreshStencilInfo();
+  }
+  function closeStencil() { $('stencilModal').classList.add('hidden'); }
+
+  function refreshStencilInfo() {
+    const side = $('stStencilSide').value;
+    const info = $('stencilInfo');
+    if (!pasteAvailable(side)) {
+      info.innerHTML = '<span style="color:var(--warn)">Nessuna piazzola paste per questo lato. Carica i Gerber (layer .gtp/.gbp) o un file .kicad_pcb.</span>';
+      return;
+    }
+    const L = state.pads[side];
+    const n = (L.pads ? L.pads.length : 0) + (L.regions ? L.regions.length : 0);
+    const src = L.isPaste === false
+      ? '<span style="color:var(--warn)"> · attenzione: derivato dal rame, non dal layer paste (aperture sovradimensionate)</span>'
+      : '';
+    info.innerHTML = `${n} aperture sul lato ${side}${src}`;
+  }
+
+  function exportStencil() {
+    const errEl = $('stencilErr'); errEl.textContent = '';
+    try {
+      const side = $('stStencilSide').value;
+      const fmt = $('stFormat').value;
+      const opts = {
+        reduction: parseFloat($('stReduction').value) || 0,
+        margin: parseFloat($('stMargin').value),
+        mirror: $('stMirror').checked,
+        thickness: parseFloat($('stThickness').value) || 0.12,
+        boardBounds: state.outline ? state.outline.bounds : null,
+      };
+      const r = Stencil.build(state.pads, side, opts);
+      const base = (state.bomName || 'board').replace(/\.[^.]+$/, '') + '-stencil-' + side;
+      if (fmt === 'svg') download(Stencil.toSVG(r.contours, r.frame), base + '.svg', 'image/svg+xml');
+      else if (fmt === 'dxf') download(Stencil.toDXF(r.contours, r.frame), base + '.dxf', 'application/dxf');
+      else if (fmt === 'gerber') download(Stencil.toGerber(r.contours), base + (side === 'top' ? '.gtp' : '.gbp'), 'text/plain');
+      else if (fmt === 'stl') download(Stencil.toSTL(r.contours, r.frame, opts.thickness), base + '.stl', 'model/stl');
+      closeStencil();
+    } catch (e) {
+      console.error(e);
+      errEl.textContent = e.message || String(e);
+    }
+  }
+
+  const JS_FILES = ['csv.js', 'footprints.js', 'parsers.js', 'gerber.js', 'stencil.js', 'kicad.js', 'render.js', 'iso.js', 'bom.js', 'app.js'];
 
   async function exportStandalone() {
     try {

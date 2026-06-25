@@ -95,6 +95,29 @@ ottiene il BOM interattivo completo, senza i CSV originali.
 > tool è servito da un server (GitHub Pages o un server locale), non aperto con
 > `file://`.
 
+## Stencil per la solder paste
+
+Il pulsante **⬇ Stencil** genera uno stencil con le **sole aperture della pasta
+saldante**, ricavate dal layer paste (`.gtp`/`.gbp` dei Gerber, oppure dai pad
+SMD di un `.kicad_pcb`). Formati disponibili:
+
+- **SVG** — vettoriale 1:1 in millimetri, aperture nere su sfondo bianco; utile
+  per il taglio laser o come anteprima/documentazione.
+- **DXF** — un `LWPOLYLINE` per ogni apertura (LightBurn, Inkscape, taglio laser).
+- **Gerber** (`.gtp`/`.gbp`) — layer paste rigenerato come regioni riempite, da
+  inviare a chi produce lo stencil.
+- **STL** — lamina (con cornice) e aperture come fori passanti, **spessore
+  impostabile** (es. 0.10–0.15 mm), pronta per la stampa 3D. La mesh è chiusa
+  (watertight, manifold).
+
+Opzioni: **riduzione apertura %** (rimpicciolisce ogni apertura attorno al suo
+centro, per rilasciare meno pasta), **cornice/bordo** attorno alla scheda, e
+**specchiatura** automatica per il lato bottom.
+
+> Lo stencil usa il layer *paste*. Se sono disponibili solo i layer rame, le
+> aperture risultano sovradimensionate (vengono dalle piazzole, non dalla
+> maschera pasta): il tool lo segnala.
+
 ## Roadmap
 
 - [x] Fase 2: parsing dei **Gerber** (contorno) + vista isometrica.
@@ -105,6 +128,7 @@ ottiene il BOM interattivo completo, senza i CSV originali.
 - [x] Evidenziare le **piazzole del singolo componente** selezionato.
 - [x] Serigrafia (silkscreen) e fori di foratura (drill).
 - [x] Gestione varianti / componenti DNP (Do Not Place).
+- [x] Generatore **stencil solder paste** (SVG / DXF / Gerber / STL).
 - [ ] Net highlighting (click pad → evidenzia la net).
 - [ ] Doppia vista top+bottom affiancata e sincronizzata.
 - [ ] Import Altium / Eagle / Fusion.
@@ -118,6 +142,7 @@ js/csv.js           # parser CSV/TSV
 js/footprints.js    # stima dimensioni footprint
 js/parsers.js       # parsing BOM + CPL (JLCPCB/KiCad)
 js/gerber.js        # parser Gerber (contorno + piazzole, macro AM) + unzip
+js/stencil.js       # generatore stencil paste (SVG/DXF/Gerber/STL, earcut)
 js/kicad.js         # parser nativo .kicad_pcb (s-expression)
 js/render.js        # canvas 2D: disegno, pan/zoom, hit-test
 js/iso.js           # vista isometrica esplosa in SVG

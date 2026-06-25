@@ -363,6 +363,19 @@
     $('explodeRange').addEventListener('input', e => { if (iso) iso.setExplode(parseFloat(e.target.value)); });
     $('exportSvgBtn').addEventListener('click', exportSvg);
     $('exportHtmlBtn').addEventListener('click', exportStandalone);
+    $('stencilBtn').addEventListener('click', openStencil);
+    $('stencilClose').addEventListener('click', closeStencil);
+    $('stencilCancel').addEventListener('click', closeStencil);
+    $('stencilModal').addEventListener('click', e => { if (e.target === $('stencilModal')) closeStencil(); });
+    $('stStencilSide').addEventListener('change', e => {
+      const both = e.target.value === 'both';
+      $('stMirror').disabled = both;                       // in "both" il bottom è specchiato automaticamente
+      $('stMirror').checked = both ? false : e.target.value === 'bottom';
+      refreshStencilInfo();
+    });
+    $('stReduction').addEventListener('input', refreshStencilInfo);
+    $('stMirror').addEventListener('change', refreshStencilInfo);
+    $('stencilExport').addEventListener('click', exportStencil);
     $('showPads').addEventListener('change', e => { renderer.setShowPads(e.target.checked); if (iso) iso.setShowPads(e.target.checked); });
     $('showSilk').addEventListener('change', e => { renderer.setShowSilk(e.target.checked); if (iso) iso.setShowSilk(e.target.checked); });
     $('showDrill').addEventListener('change', e => { renderer.setShowDrill(e.target.checked); if (iso) iso.setShowDrill(e.target.checked); });
@@ -399,7 +412,87 @@
     download(iso.exportSVG(), base + '-iso.svg', 'image/svg+xml');
   }
 
-  const JS_FILES = ['csv.js', 'footprints.js', 'parsers.js', 'gerber.js', 'kicad.js', 'render.js', 'iso.js', 'bom.js', 'app.js'];
+  /* ---------- Stencil ---------- */
+  function pasteAvailable(side) {
+    const L = state.pads && state.pads[side];
+    return !!(L && ((L.pads && L.pads.length) || (L.regions && L.regions.length)));
+  }
+
+  function openStencil() {
+    $('stencilErr').textContent = '';
+    // pick a side that actually has data
+    const sideSel = $('stStencilSide');
+    if (!pasteAvailable('top') && pasteAvailable('bottom')) sideSel.value = 'bottom';
+    const both = sideSel.value === 'both';
+    $('stMirror').disabled = both;
+    $('stMirror').checked = both ? false : sideSel.value === 'bottom';
+    $('stencilModal').classList.remove('hidden');
+    refreshStencilInfo();
+  }
+  function closeStencil() { $('stencilModal').classList.add('hidden'); }
+
+  function sideInfo(side) {
+    const L = state.pads[side];
+    const n = (L.pads ? L.pads.length : 0) + (L.regions ? L.regions.length : 0);
+    const src = L.isPaste === false
+      ? ' <span style="color:var(--warn)">(da rame, non paste: aperture sovradimensionate)</span>'
+      : '';
+    return `${n} aperture · ${side}${src}`;
+  }
+  function refreshStencilInfo() {
+    const side = $('stStencilSide').value;
+    const info = $('stencilInfo');
+    const sides = side === 'both' ? ['top', 'bottom'] : [side];
+    const have = sides.filter(pasteAvailable);
+    if (!have.length) {
+      info.innerHTML = '<span style="color:var(--warn)">Nessuna piazzola paste. Carica i Gerber (layer .gtp/.gbp) o un file .kicad_pcb.</span>';
+      return;
+    }
+    const skipped = sides.filter(s => !pasteAvailable(s));
+    info.innerHTML = have.map(sideInfo).join('<br>') +
+      (skipped.length ? `<br><span style="color:var(--muted)">${skipped.join(', ')}: nessuna paste, lato saltato</span>` : '');
+  }
+
+  function exportStencilSide(side, fmt, baseOpts, delay) {
+    // bottom is mirrored by default; in "both" mode the per-side flag wins.
+    const opts = Object.assign({}, baseOpts, { mirror: baseOpts.mirror || side === 'bottom' && baseOpts.bothMode });
+    const r = Stencil.build(state.pads, side, opts);
+    const base = (state.bomName || 'board').replace(/\.[^.]+$/, '') + '-stencil-' + side;
+    const fire = () => {
+      if (fmt === 'svg') download(Stencil.toSVG(r.contours, r.frame), base + '.svg', 'image/svg+xml');
+      else if (fmt === 'dxf') download(Stencil.toDXF(r.contours, r.frame), base + '.dxf', 'application/dxf');
+      else if (fmt === 'gerber') download(Stencil.toGerber(r.contours), base + (side === 'top' ? '.gtp' : '.gbp'), 'text/plain');
+      else if (fmt === 'stl') download(Stencil.toSTL(r.contours, r.frame, opts.thickness), base + '.stl', 'model/stl');
+    };
+    if (delay) setTimeout(fire, delay); else fire();
+  }
+
+  function exportStencil() {
+    const errEl = $('stencilErr'); errEl.textContent = '';
+    try {
+      const side = $('stStencilSide').value;
+      const fmt = $('stFormat').value;
+      const bothMode = side === 'both';
+      const baseOpts = {
+        reduction: parseFloat($('stReduction').value) || 0,
+        margin: parseFloat($('stMargin').value),
+        mirror: $('stMirror').checked,
+        thickness: parseFloat($('stThickness').value) || 0.12,
+        boardBounds: state.outline ? state.outline.bounds : null,
+        bothMode,
+      };
+      const sides = (bothMode ? ['top', 'bottom'] : [side]).filter(pasteAvailable);
+      if (!sides.length) throw new Error('Nessuna piazzola di solder paste da esportare.');
+      // stagger downloads so the browser doesn't drop the second file
+      sides.forEach((s, i) => exportStencilSide(s, fmt, baseOpts, i * 350));
+      closeStencil();
+    } catch (e) {
+      console.error(e);
+      errEl.textContent = e.message || String(e);
+    }
+  }
+
+  const JS_FILES = ['csv.js', 'footprints.js', 'parsers.js', 'gerber.js', 'stencil.js', 'kicad.js', 'render.js', 'iso.js', 'bom.js', 'app.js'];
 
   async function exportStandalone() {
     try {

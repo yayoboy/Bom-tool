@@ -118,6 +118,7 @@
         <label class="chk-inline"><input type="checkbox" id="showDrill" checked /> Fori</label>
         <label class="chk-inline"><input type="checkbox" id="showDNP" checked /> DNP</label>
         <label class="chk-inline"><input type="checkbox" id="showRefs" /> Ref</label>
+        <button class="btn btn-ghost" id="stencilBtn" title="Genera lo stencil per la solder paste">⬇ Stencil</button>
         <button class="btn btn-ghost" id="exportHtmlBtn" title="Esporta tutto in un singolo file HTML">⬇ HTML</button>
       </div>
       <canvas id="board"></canvas>
@@ -126,10 +127,55 @@
     </section>
   </main>
 
+  <!-- Stencil export modal -->
+  <div id="stencilModal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-head">
+        <h2>Stencil solder paste</h2>
+        <button class="modal-close" id="stencilClose" title="Chiudi">✕</button>
+      </div>
+      <p class="muted modal-sub">Esporta le sole aperture della pasta saldante dal layer paste dei Gerber / KiCad.</p>
+      <div class="form-grid">
+        <label>Lato
+          <select id="stStencilSide">
+            <option value="top">Top (fronte)</option>
+            <option value="bottom">Bottom (retro)</option>
+            <option value="both">Entrambi (top + bottom)</option>
+          </select>
+        </label>
+        <label>Formato
+          <select id="stFormat">
+            <option value="svg">SVG (vettoriale 1:1)</option>
+            <option value="dxf">DXF (taglio laser)</option>
+            <option value="gerber">Gerber (.gtp)</option>
+            <option value="stl">STL (stampa 3D)</option>
+          </select>
+        </label>
+        <label>Spessore STL (mm)
+          <input type="number" id="stThickness" value="0.12" min="0.05" max="2" step="0.01" />
+        </label>
+        <label>Riduzione apertura (%)
+          <input type="number" id="stReduction" value="0" min="0" max="40" step="1" />
+        </label>
+        <label>Cornice / bordo (mm)
+          <input type="number" id="stMargin" value="5" min="0" max="30" step="0.5" />
+        </label>
+        <label class="chk-row"><input type="checkbox" id="stMirror" /> Specchia (lato bottom)</label>
+      </div>
+      <p id="stencilInfo" class="muted modal-sub"></p>
+      <p id="stencilErr" class="error"></p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="stencilCancel">Annulla</button>
+        <button class="btn btn-primary" id="stencilExport">Esporta stencil</button>
+      </div>
+    </div>
+  </div>
+
   <script src="js/csv.js"></script>
   <script src="js/footprints.js"></script>
   <script src="js/parsers.js"></script>
   <script src="js/gerber.js"></script>
+  <script src="js/stencil.js"></script>
   <script src="js/kicad.js"></script>
   <script src="js/render.js"></script>
   <script src="js/iso.js"></script>
